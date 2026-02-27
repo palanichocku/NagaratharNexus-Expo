@@ -16,6 +16,14 @@ export const Colors = {
     icon: '#687076',
     tabIconDefault: '#687076',
     tabIconSelected: tintColorLight,
+
+    // ✅ Premium warm palette (Nagarathar Nexus)
+    warmBg: '#FDF6EC',
+    warmSurface: '#FFF8F1',
+    warmBorder: '#E8D5C4',
+    warmPrimary: '#7B1E3A',
+    warmGold: '#C9A227',
+    warmMutedText: '#6B7280',
   },
   dark: {
     text: '#ECEDEE',
@@ -24,6 +32,14 @@ export const Colors = {
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
+
+    // ✅ Premium warm palette (dark mode tuned)
+    warmBg: '#151718',
+    warmSurface: '#1F2124',
+    warmBorder: '#2C2F33',
+    warmPrimary: '#D08AA0',
+    warmGold: '#E0C060',
+    warmMutedText: '#9BA1A6',
   },
 };
 
