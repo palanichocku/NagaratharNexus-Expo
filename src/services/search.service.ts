@@ -1,4 +1,6 @@
 // ./src/services/search.service.ts
+//  This file implements the searchProfiles function which performs a keyset paginated search with various filters 
+//  and role-based access control.
 import { supabase } from "../lib/supabase";
 
 export type SearchCursor = {
