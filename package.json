@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "start:dev": "./switch_env.sh dev && npx expo start -c",
+    "start:prod": "./switch_env.sh prod && npx expo start -c",
+    "env:status": "./switch_env.sh status",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",

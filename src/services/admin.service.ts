@@ -1,5 +1,5 @@
 // ./src/services/admin.service.ts
-import { supabase, supabaseAdmin } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import * as AppData from '../constants/appData';
 import { Alert, Platform } from 'react-native';
 import { AUDIT_SETTINGS } from '../constants/auditConfig';

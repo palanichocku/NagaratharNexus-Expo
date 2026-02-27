@@ -212,6 +212,7 @@ export const searchProfiles = async (
 
 export const getFilterMetadata = async () => {
   const { data, error } = await supabase.rpc("get_filter_metadata");
+  console.log('getFilterMetadata raw data:', JSON.stringify(data));
   if (error) throw error;
   return data;
 };
