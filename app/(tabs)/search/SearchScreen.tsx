@@ -1,5 +1,4 @@
 // app/(tabs)/search/SearchScreen.tsx
-// app/(tabs)/search/SearchScreen.tsx
 import React, { useEffect, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { supabase } from '../../../src/lib/supabase';
@@ -34,14 +33,22 @@ export default function SearchScreen() {
   }>({ userId: null, role: 'USER', gender: null });
 
   useEffect(() => {
-    const checkAccess = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+  let alive = true;
+
+  const checkAccess = async () => {
+    console.time('checkAccess');
+    try {
+      const { data, error: userErr } = await supabase.auth.getUser();
+      if (userErr) throw userErr;
+
+      const user = data?.user;
       if (!user) {
+        if (!alive) return;
         setCtx({ userId: null, role: 'USER', gender: null });
-        return setGate('NEW');
+        setGate('NEW');
+        return;
       }
 
-      // Pull profile + role (prefer user_roles table)
       const [profRes, roleRes] = await Promise.all([
         supabase
           .from('profiles')
@@ -55,11 +62,20 @@ export default function SearchScreen() {
           .maybeSingle(),
       ]);
 
+      if (profRes.error) throw profRes.error;
       const profile = profRes.data;
+      if (!profile) {
+        if (!alive) return;
+        setGate('NEW');
+        return;
+      }
+
       const role =
-        normalizeRole(roleRes.data?.role) ||
-        normalizeRole(profile?.role) ||
+        normalizeRole(roleRes.data?.role) ??
+        normalizeRole(profile?.role) ??
         normalizeRole(user.user_metadata?.role);
+
+      if (!alive) return;
 
       setCtx({
         userId: user.id,
@@ -67,13 +83,20 @@ export default function SearchScreen() {
         gender: normalizeGender(profile?.gender),
       });
 
-      if (profRes.error || !profile) return setGate('NEW');
-      if (profile.is_approved) return setGate('ACTIVE');
-      return setGate('PENDING');
-    };
+      setGate(profile.is_approved ? 'ACTIVE' : 'PENDING');
+    } catch (e) {
+      console.error('checkAccess failed', e);
+      if (!alive) return;
+      setCtx({ userId: null, role: 'USER', gender: null });
+      setGate('NEW'); // fail-safe: never stay LOADING
+    } finally {
+      console.timeEnd('checkAccess');
+    }
+  };
 
-    checkAccess();
-  }, []);
+  checkAccess();
+  return () => { alive = false; };
+}, []);
 
   if (gate === 'LOADING') {
     return (

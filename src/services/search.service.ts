@@ -129,6 +129,7 @@ export const searchProfiles = async (
       // but because we may filter, we’ll likely need multiple batches anyway.
       const requestSize = pageSize + 1;
 
+      console.time('rpc search_profiles_v2');
       const { data, error } = await supabase.rpc('search_profiles_v2', {
         p_query: (filters?.query || '').trim() || null,
         p_min_age: filters?.minAge ?? 18,
@@ -144,7 +145,8 @@ export const searchProfiles = async (
         p_cursor_id: workingCursor?.id ?? null,
         p_exclude_kovil_pirivu: hasAny(excludeKovilPirivu) ? excludeKovilPirivu : null,
       });
-
+      console.timeEnd('rpc search_profiles_v2');
+      
       if (error) throw error;
 
       const rawRows = Array.isArray(data) ? data.map((r: any) => r.profile_data) : [];
@@ -213,8 +215,17 @@ export const searchProfiles = async (
 };
 
 export const getFilterMetadata = async () => {
+  const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
   const { data, error } = await supabase.rpc("get_filter_metadata");
-  console.log('getFilterMetadata raw data:', JSON.stringify(data));
+  const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
+
   if (error) throw error;
+
+  // Safe log (won’t freeze)
+  if (__DEV__) {
+    const keys = data && typeof data === 'object' ? Object.keys(data) : [];
+    console.log(`getFilterMetadata ok in ${(t1 - t0).toFixed(0)}ms keys=`, keys);
+  }
+
   return data;
 };

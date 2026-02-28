@@ -12,6 +12,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('⚠️ Supabase credentials missing! Check your .env file.');
 }
 
+const fetchWithTimeout: typeof fetch = (input, init) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+
+  return fetch(input, { ...(init || {}), signal: controller.signal })
+    .finally(() => clearTimeout(timeout));
+};
+
 // 🚀 SSR-Safe Environment Detection
 // This prevents "window is not defined" during Expo pre-rendering
 export const REDIRECT_URL = Platform.OS === 'web' 
@@ -39,4 +47,5 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: true,
     flowType: 'pkce',
   },
+  global: { fetch: fetchWithTimeout },
 });
