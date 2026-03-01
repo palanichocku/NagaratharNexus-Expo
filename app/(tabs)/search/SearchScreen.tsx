@@ -30,7 +30,9 @@ export default function SearchScreen() {
     userId: string | null;
     role: AppRole;
     gender: Gender | null;
-  }>({ userId: null, role: 'USER', gender: null });
+    kovil: string | null;
+    pirivu: string | null;
+  }>({ userId: null, role: 'USER', gender: null, kovil: null, pirivu: null });
 
   useEffect(() => {
   let alive = true;
@@ -44,7 +46,7 @@ export default function SearchScreen() {
       const user = data?.user;
       if (!user) {
         if (!alive) return;
-        setCtx({ userId: null, role: 'USER', gender: null });
+        setCtx({ userId: null, role: 'USER', gender: null, kovil: null, pirivu: null });
         setGate('NEW');
         return;
       }
@@ -52,7 +54,7 @@ export default function SearchScreen() {
       const [profRes, roleRes] = await Promise.all([
         supabase
           .from('profiles')
-          .select('is_approved, gender, role')
+          .select('is_approved, gender, role, kovil, pirivu')
           .eq('id', user.id)
           .maybeSingle(),
         supabase
@@ -81,13 +83,15 @@ export default function SearchScreen() {
         userId: user.id,
         role,
         gender: normalizeGender(profile?.gender),
+        kovil: profile?.kovil ?? null,
+        pirivu: profile?.pirivu ?? null,
       });
 
       setGate(profile.is_approved ? 'ACTIVE' : 'PENDING');
     } catch (e) {
       console.error('checkAccess failed', e);
       if (!alive) return;
-      setCtx({ userId: null, role: 'USER', gender: null });
+      setCtx({ userId: null, role: 'USER', gender: null, kovil: null, pirivu: null });
       setGate('NEW'); // fail-safe: never stay LOADING
     } finally {
       console.timeEnd('checkAccess');
@@ -110,7 +114,7 @@ export default function SearchScreen() {
     <SearchExperience
       mode="USER"
       // ✅ critical: pass user identity context to enforce filters server-side
-      context={{ role: ctx.role, userId: ctx.userId, gender: ctx.gender }}
+      context={{ role: ctx.role, userId: ctx.userId, gender: ctx.gender, kovil: ctx.kovil, pirivu: ctx.pirivu }}
       gateEnabled
       gateState={gate}
       autoSearchOnMount={false}

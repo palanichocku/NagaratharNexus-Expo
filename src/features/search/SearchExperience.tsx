@@ -57,8 +57,8 @@ function profileToSearchBlob(p: any): string {
     p?.field_of_study,
     p?.university,
 
-    p?.city,
-    p?.state,
+    p?.current_city,
+    p?.current_state,
     p?.resident_country,
     p?.native_place,
 

@@ -32,6 +32,8 @@ export type SearchCallerContext = {
   userId?: string | null;
   role?: string | null;   // 'ADMIN' | 'MODERATOR' | 'USER' (case-insensitive)
   gender?: string | null; // 'MALE' | 'FEMALE' (case-insensitive)
+  kovil?: string | null;
+  pirivu?: string | null;
 };
 
 const MAX_INTERESTS = 3;
@@ -56,6 +58,14 @@ const normalizeInterests = (interests?: string[]): string[] => {
   const cleaned = uniq(normalizeStringArray(interests));
   return cleaned.slice(0, MAX_INTERESTS);
 };
+
+function buildHardKovilExclusion(kovil: string | null, pirivu: string | null): string[] {
+  const k = String(kovil ?? '').trim();
+  const p = String(pirivu ?? '').trim();
+  if (!k) return [];
+  if (p) return [`${k}||${p}`]; // ✅ exclude only that pirivu within kovil
+  return [`${k}||*`];           // ✅ if pirivu unknown, exclude whole kovil
+}
 
 function normUpper(v: any): string {
   return String(v ?? "").trim().toUpperCase();
@@ -89,128 +99,96 @@ export const searchProfiles = async (
   cursor?: SearchCursor | null,
   caller?: SearchCallerContext,
 ): Promise<SearchResult> => {
-  const startTime = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const startTime =
+    typeof performance !== 'undefined' ? performance.now() : Date.now();
 
   try {
-    const interests = normalizeInterests(filters?.interests);
     const countries = normalizeStringArray(filters?.countries);
     const maritalStatuses = normalizeStringArray(filters?.maritalStatus);
-    const educations = normalizeStringArray(filters?.education);
-    const excludeKovilPirivu = normalizeStringArray(filters?.excludeKovilPirivu);
 
-    // ✅ Rule inputs
     const currentUserId = caller?.userId ?? null;
     const role = normRole(caller?.role);
     const myGender = normUpper(caller?.gender || null);
 
-    // ✅ Only USER is constrained to opposite gender
     const forcedTargetGender =
       role === 'USER' ? oppositeGender(myGender) : null;
 
-    // We still do "pageSize+1" semantics, but AFTER filtering.
-    const wantFiltered = pageSize + 1;
+    // ✅ HARD KOVIL RULE
+    const hardExclude = buildHardKovilExclusion(
+      caller?.kovil ?? null,
+      caller?.pirivu ?? null,
+    );
 
-    // We'll fetch multiple batches until we have enough filtered results or run out.
-    // Safety cap prevents accidental infinite loops.
-    const MAX_BATCHES = 6;
+    const extraExclude = normalizeStringArray(
+      filters?.excludeKovilPirivu,
+    );
 
-    let workingCursor: SearchCursor | null | undefined = cursor ?? null;
-    let exhausted = false;
+    const excludeMerged = uniq([...hardExclude, ...extraExclude]);
 
-    const kept: any[] = [];
-    // Track cursor of the *pageSize-th kept profile* for correct nextCursor
-    // (cursor should advance after the last returned item).
-    let lastReturnedCursor: SearchCursor | null = null;
+    const requestSize = pageSize + 1;
 
-    for (let batch = 0; batch < MAX_BATCHES; batch += 1) {
-      if (kept.length >= wantFiltered || exhausted) break;
-
-      // Fetch one extra row to know if this batch had more,
-      // but because we may filter, we’ll likely need multiple batches anyway.
-      const requestSize = pageSize + 1;
-
-      console.time('rpc search_profiles_v2');
-      const { data, error } = await supabase.rpc('search_profiles_v2', {
+    console.time?.('rpc search_profile_cards_v1');
+    const { data, error } = await supabase.rpc(
+      'search_profile_cards_v1',
+      {
         p_query: (filters?.query || '').trim() || null,
         p_min_age: filters?.minAge ?? 18,
         p_max_age: filters?.maxAge ?? 60,
         p_min_height: filters?.minHeight ?? 48,
         p_max_height: filters?.maxHeight ?? 84,
         p_countries: hasAny(countries) ? countries : null,
-        p_marital_statuses: hasAny(maritalStatuses) ? maritalStatuses : null,
-        p_educations: hasAny(educations) ? educations : null,
-        p_interests: hasAny(interests) ? interests : null,
+        p_marital_statuses: hasAny(maritalStatuses)
+          ? maritalStatuses
+          : null,
+
+        p_exclude_kovil_pirivu: excludeMerged.length
+          ? excludeMerged
+          : null,
+
         p_page_size: requestSize,
-        p_cursor_updated_at: workingCursor?.updatedAt ?? null,
-        p_cursor_id: workingCursor?.id ?? null,
-        p_exclude_kovil_pirivu: hasAny(excludeKovilPirivu) ? excludeKovilPirivu : null,
-      });
-      console.timeEnd('rpc search_profiles_v2');
-      
-      if (error) throw error;
+        p_cursor_updated_at: cursor?.updatedAt ?? null,
+        p_cursor_id: cursor?.id ?? null,
 
-      const rawRows = Array.isArray(data) ? data.map((r: any) => r.profile_data) : [];
-      if (rawRows.length === 0) {
-        exhausted = true;
-        break;
-      }
+        p_exclude_user_id: currentUserId,
+        p_forced_gender: forcedTargetGender,
+      },
+    );
+    console.timeEnd?.('rpc search_profile_cards_v1');
 
-      // Advance the working cursor to the last RAW row we saw
-      const lastRaw = rawRows[rawRows.length - 1];
-      if (lastRaw?.updated_at && lastRaw?.id) {
-        workingCursor = { updatedAt: lastRaw.updated_at, id: lastRaw.id };
-      } else {
-        // If RPC doesn’t return cursor fields, we cannot safely continue.
-        exhausted = true;
-      }
+    if (error) throw error;
 
-      // If batch returned fewer than requestSize, no more rows exist after this batch.
-      if (rawRows.length < requestSize) exhausted = true;
+    const rows = Array.isArray(data) ? data : [];
 
-      // Apply required filtering while preserving ordering.
-      for (const p of rawRows) {
-        if (!p) continue;
+    const hasMore = rows.length > pageSize;
+    const profiles = hasMore ? rows.slice(0, pageSize) : rows;
 
-        // Rule #2: exclude own profile always
-        if (currentUserId && String(p.id) === String(currentUserId)) continue;
-
-        // Rule #1: opposite gender only for USER role
-        if (forcedTargetGender) {
-          const pg = normUpper(p.gender || null);
-          if (pg !== forcedTargetGender) continue;
-        }
-
-        kept.push(p);
-
-        // Set lastReturnedCursor when we hit the pageSize-th item,
-        // because that is the cursor after the last returned item.
-        if (kept.length === pageSize && p?.updated_at && p?.id) {
-          lastReturnedCursor = { updatedAt: p.updated_at, id: p.id };
-        }
-
-        if (kept.length >= wantFiltered) break;
-      }
-    }
-
-    const hasMore = kept.length > pageSize;
-    const profiles = hasMore ? kept.slice(0, pageSize) : kept;
-
-    // nextCursor should advance after the last item the user received.
-    // If we never hit pageSize items, there is no next page anyway.
+    const last = profiles[profiles.length - 1];
     const nextCursor: SearchCursor | null =
-      hasMore ? (lastReturnedCursor ?? null) : null;
+      hasMore && last?.updated_at && last?.id
+        ? { updatedAt: last.updated_at, id: last.id }
+        : null;
 
-    const endTime = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const endTime =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     return {
       profiles,
-      totalCount: syntheticTotalCount(page, pageSize, profiles.length),
+      totalCount: syntheticTotalCount(
+        page,
+        pageSize,
+        profiles.length,
+      ),
       duration: (endTime - startTime).toFixed(2),
       nextCursor,
     };
   } catch (e) {
-    console.error("searchProfiles failed:", e);
-    return { profiles: [], totalCount: 0, duration: "0", nextCursor: null };
+    console.error('searchProfiles failed:', e);
+    return {
+      profiles: [],
+      totalCount: 0,
+      duration: '0',
+      nextCursor: null,
+    };
   }
 };
 
