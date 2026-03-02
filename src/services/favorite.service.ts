@@ -1,5 +1,6 @@
-// src/services/favorite.service.ts
+// ./src/services/favorite.service.ts
 import { supabase } from '../lib/supabase';
+import type { SearchCursor, ThinProfileCard } from './search.service';
 
 type AddFavoriteResult =
   | { ok: true }
@@ -34,55 +35,63 @@ async function getFavoritesLimit(): Promise<number> {
 
     cachedLimit = { value: n, fetchedAt: now };
     return n;
-  } catch (e) {
-    // fallback
+  } catch {
     cachedLimit = { value: DEFAULT_LIMIT, fetchedAt: now };
     return DEFAULT_LIMIT;
   }
 }
 
-async function countFavorites(userId: string): Promise<number> {
-  const { count, error } = await supabase
-    .from('favorites')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId);
+export type FavoritesCursor = {
+  createdAt: string;
+  favoriteId: string;
+};
 
-  if (error) throw error;
-  return Number(count ?? 0);
-}
+export type FavoritesPageResult = {
+  profiles: ThinProfileCard[];
+  nextCursor: FavoritesCursor | null;
+};
+
+const toCursor = (row: any): FavoritesCursor | null => {
+  const createdAt = String(row?.fav_created_at ?? '');
+  const favoriteId = String(row?.id ?? '');
+  if (!createdAt || !favoriteId) return null;
+  return { createdAt, favoriteId };
+};
 
 export const favoriteService = {
-  async getFavorites() {
+  /** ✅ Fast: paged “thin cards” via RPC */
+  async getFavoriteCardsPage(params: {
+    pageSize: number;
+    cursor?: FavoritesCursor | null;
+  }): Promise<FavoritesPageResult> {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return [];
+    if (!user) return { profiles: [], nextCursor: null };
 
-    try {
-      // ✅ Also fetch created_at for stable ordering if you have it
-      const { data: favs, error } = await supabase
-        .from('favorites')
-        .select('favorite_id')
-        .eq('user_id', user.id);
+    const requestSize = params.pageSize + 1;
 
-      if (error) throw error;
-      if (!favs || favs.length === 0) return [];
+    const { data, error } = await supabase.rpc('get_favorite_profile_cards_v1', {
+      p_user_id: user.id,
+      p_page_size: requestSize,
+      p_cursor_created_at: params.cursor?.createdAt ?? null,
+      p_cursor_favorite_id: params.cursor?.favoriteId ?? null,
+    });
 
-      const profileIds = favs.map((f: any) => f.favorite_id);
-      const { data: profiles, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .in('id', profileIds);
+    if (error) throw error;
 
-      if (profileError) throw profileError;
-      return profiles || [];
-    } catch (e) {
-      console.error('[FAV_SERVICE] Manual fetch error:', e);
-      return [];
-    }
+    const rows = Array.isArray(data) ? data : [];
+    const hasMore = rows.length > params.pageSize;
+    const profiles = hasMore ? rows.slice(0, params.pageSize) : rows;
+
+    const last = profiles[profiles.length - 1];
+    const nextCursor = hasMore ? toCursor(last) : null;
+
+    return { profiles: profiles as ThinProfileCard[], nextCursor };
   },
 
   async isFavorite(profileId: string) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !profileId) return false;
+
     try {
       const { data, error } = await supabase
         .from('favorites')
@@ -98,12 +107,7 @@ export const favoriteService = {
     }
   },
 
-  // ✅ New: add with limit (configurable, max 20)
-  async addFavoriteWithLimit(profileId: string): Promise<
-    | { ok: true }
-    | { ok: false; reason: 'LIMIT_REACHED'; limit: number }
-    | { ok: false; reason: 'ERROR'; message?: string }
-  > {
+  async addFavoriteWithLimit(profileId: string): Promise<AddFavoriteResult> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !profileId) return { ok: false, reason: 'ERROR', message: 'Not authenticated' };
 
@@ -121,12 +125,9 @@ export const favoriteService = {
           return { ok: false, reason: 'LIMIT_REACHED', limit: lim };
         }
 
-        // ✅ Expected-ish: already favorited (unique constraint)
-        if ((error as any).code === '23505') {
-          return { ok: true };
-        }
+        // ✅ Already favorited (unique constraint)
+        if ((error as any).code === '23505') return { ok: true };
 
-        // Unexpected
         return { ok: false, reason: 'ERROR', message: msg };
       }
 
@@ -151,5 +152,9 @@ export const favoriteService = {
     } catch (e) {
       console.error('[FAV_SERVICE] Remove Error:', e);
     }
+  },
+
+  async getFavoritesLimitCached() {
+    return getFavoritesLimit();
   },
 };

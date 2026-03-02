@@ -1,5 +1,5 @@
-// src/features/search/SearchExperience.tsx
-import React, { useMemo } from 'react';
+// ./src/features/search/SearchExperience.tsx
+import React, { useEffect, useMemo, useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -7,15 +7,25 @@ import {
   Platform,
   ActivityIndicator,
   TouchableOpacity,
+  FlatList,
+  Image,
+  useWindowDimensions,
+  Modal,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useAppTheme } from '../../theme/ThemeProvider';
-import FilterPanel from '../../../app/(tabs)/search/FilterPanel'; // ✅ reusing your existing panel
+import FilterPanel from '../../../app/(tabs)/search/FilterPanel';
 import ProfileFocusView from '../../../app/(tabs)/search/ProfileFocusView';
 
 import { useUnifiedSearchController } from './useUnifiedSearchController';
-import { DEFAULT_FILTERS, PAGE_SIZE, type SearchContext } from './types';
+import { DEFAULT_FILTERS, type SearchContext } from './types';
+import type { ThinProfileCard } from '../../services/search.service';
+
+import { supabase } from '../../lib/supabase';
+import { favoriteService } from '../../services/favorite.service';
+import { ProfileThinTile } from '../../components/ProfileThinTile';
 
 type GateState = 'LOADING' | 'ACTIVE' | 'PENDING' | 'NEW' | 'REJECTED';
 
@@ -23,70 +33,13 @@ type Props = {
   mode: 'USER' | 'ADMIN';
   context: SearchContext;
 
-  // User screen uses gate; Admin usually doesn’t
   gateEnabled?: boolean;
   gateState?: GateState;
 
-  autoSearchOnMount?: boolean; // Admin might set true
+  autoSearchOnMount?: boolean;
   initialFilters?: typeof DEFAULT_FILTERS;
   onReport?: () => void;
 };
-
-/** ---------------- Keyword refinement helpers (client-side) ---------------- */
-function tokenizeQuery(q: string): string[] {
-  return String(q || '')
-    .toLowerCase()
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-function profileToSearchBlob(p: any): string {
-  // Add/adjust fields based on your schema. This is intentionally broad.
-  const parts = [
-    p?.full_name,
-    p?.name,
-    p?.first_name,
-    p?.last_name,
-
-    p?.profession,
-    p?.occupation,
-    p?.workplace,
-
-    p?.education,
-    p?.field_of_study,
-    p?.university,
-
-    p?.current_city,
-    p?.current_state,
-    p?.resident_country,
-    p?.native_place,
-
-    p?.kovil,
-    p?.pirivu,
-    p?.rasi,
-    p?.nakshatra,
-    p?.star,
-
-    p?.bio,
-    p?.about,
-    p?.partner_expectations,
-  ];
-
-  return parts
-    .filter((x) => x !== null && x !== undefined)
-    .map((x) => String(x).toLowerCase())
-    .join(' • ');
-}
-
-function matchesKeyword(p: any, q: string): boolean {
-  const tokens = tokenizeQuery(q);
-  if (tokens.length === 0) return true;
-
-  const blob = profileToSearchBlob(p);
-  // AND match: every token must exist somewhere in the blob
-  return tokens.every((t) => blob.includes(t));
-}
 
 export default function SearchExperience({
   mode,
@@ -100,6 +53,7 @@ export default function SearchExperience({
   const { theme } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const isWeb = Platform.OS === 'web';
+  const { width: windowW } = useWindowDimensions();
 
   const enabled = gateEnabled ? gateState === 'ACTIVE' : true;
 
@@ -112,7 +66,88 @@ export default function SearchExperience({
 
   const perfAccent = theme.colors.success ?? theme.colors.primary;
 
-  // Gate UI (only when enabled)
+  // ✅ favorites map for current page
+  const [favSet, setFavSet] = useState<Set<string>>(new Set());
+  const [favBusy, setFavBusy] = useState<Record<string, boolean>>({});
+
+  // Refresh favorite state when cards change (batched)
+  useEffect(() => {
+    let alive = true;
+
+    async function hydrateFavsForPage() {
+      try {
+        const ids = (c.cards || []).map((x) => String(x.id)).filter(Boolean);
+        if (!ids.length) {
+          if (alive) setFavSet(new Set());
+          return;
+        }
+
+        const { data: auth } = await supabase.auth.getUser();
+        const user = auth?.user;
+        if (!user) {
+          if (alive) setFavSet(new Set());
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('favorites')
+          .select('favorite_id')
+          .eq('user_id', user.id)
+          .in('favorite_id', ids);
+
+        if (error) throw error;
+
+        const s = new Set<string>((data || []).map((r: any) => String(r.favorite_id)));
+        if (alive) setFavSet(s);
+      } catch (e) {
+        // fail open: show none as favorited
+        if (alive) setFavSet(new Set());
+      }
+    }
+
+    void hydrateFavsForPage();
+    return () => {
+      alive = false;
+    };
+  }, [c.cards]);
+
+  const toggleFavorite = useCallback(
+    async (profileId: string) => {
+      if (!profileId) return;
+
+      setFavBusy((p) => ({ ...p, [profileId]: true }));
+      try {
+        const currentlyFav = favSet.has(profileId);
+
+        if (currentlyFav) {
+          await favoriteService.removeFavorite(profileId);
+          setFavSet((prev) => {
+            const n = new Set(prev);
+            n.delete(profileId);
+            return n;
+          });
+          return;
+        }
+
+        const res = await favoriteService.addFavoriteWithLimit(profileId);
+        if (res.ok) {
+          setFavSet((prev) => new Set(prev).add(profileId));
+          return;
+        }
+
+        if (!res.ok && res.reason === 'LIMIT_REACHED') {
+          Alert.alert('Favorites limit reached', `You can save up to ${res.limit} favorites.`);
+          return;
+        }
+
+        Alert.alert('Could not save favorite', res.message || 'Please try again.');
+      } finally {
+        setFavBusy((p) => ({ ...p, [profileId]: false }));
+      }
+    },
+    [favSet],
+  );
+
   if (gateEnabled && gateState !== 'ACTIVE') {
     return (
       <View style={styles.gateWrap}>
@@ -127,68 +162,67 @@ export default function SearchExperience({
     );
   }
 
-  /** ✅ Client-side refinement (keyword search filters what is already loaded) */
-  const keyword = (c.filters?.query || '').trim();
-  const refinedProfiles = useMemo(() => {
-    if (!keyword) return c.profiles;
-    return (c.profiles || []).filter((p: any) => matchesKeyword(p, keyword));
-  }, [c.profiles, keyword]);
+  const showHeader = c.hasSearched || c.cards.length > 0;
 
-  const showHeader = c.hasSearched || refinedProfiles.length > 0;
+  // ✅ gutters + centered premium cards (your “not touching edges” version)
+  const gutter = isWeb ? 24 : 16;
+  const contentPadding = gutter;
 
-  // Clamp the focused index to the refined list (important when keyword filtering reduces items)
-  const safeIndex = useMemo(() => {
-    if (!refinedProfiles.length) return 0;
-    return Math.max(0, Math.min(c.index, refinedProfiles.length - 1));
-  }, [c.index, refinedProfiles.length]);
+  const usableW = Math.max(320, windowW - (isWeb ? 340 : 0));
+  const maxListW = isWeb ? 980 : 620;
+  const listW = Math.min(maxListW, usableW - contentPadding * 2);
 
-  const currentProfile = refinedProfiles.length ? refinedProfiles[safeIndex] : null;
+  const cardW = Math.max(300, Math.min(listW, isWeb ? listW - 40 : listW - 12));
 
-  // Keep your header ordinal semantics but based on refined list
-  const currentOrdinal = refinedProfiles.length
-    ? (c.page * PAGE_SIZE) + safeIndex + 1
-    : 0;
+  const keyExtractor = useCallback((item: ThinProfileCard) => String(item.id), []);
+
+  const renderItem = useCallback(
+    ({ item, index }: { item: ThinProfileCard; index: number }) => {
+      const id = String(item.id);
+      return (
+        <ProfileThinTile
+          item={item}
+          onPress={() => c.openByIndex(index)}
+          theme={theme}
+          cardW={cardW}
+          isFavorited={favSet.has(id)}
+          favBusy={!!favBusy[id]}
+          onToggleFavorite={() => toggleFavorite(id)}
+        />
+      );
+    },
+    [c, cardW, theme, favSet, favBusy, toggleFavorite],
+  );
 
   return (
     <View style={[styles.container, isWeb && styles.webContainer]}>
-      {/* Sidebar */}
       <View style={styles.sidebar}>
         <FilterPanel
           filters={c.filters}
           onFilterChange={c.onDraftChange}
           onApply={c.apply}
-          // ✅ show refined count so the user sees keyword filtering immediately
-          totalResults={refinedProfiles.length}
+          totalResults={c.cards.length}
         />
       </View>
 
       <View style={styles.content}>
         {c.loading ? (
-          <ActivityIndicator size="large" color={theme.colors.text} />
+          <View style={{ paddingTop: 30 }}>
+            <ActivityIndicator size="large" color={theme.colors.text} />
+          </View>
         ) : (
           <View style={styles.resultWrap}>
             {showHeader ? (
               <View style={styles.searchHeader}>
                 <View>
                   <Text style={styles.searchText}>
-                    {refinedProfiles.length > 0
-                      ? `${currentOrdinal} • PAGE ${c.page + 1}`
-                      : `0 RESULTS • PAGE ${c.page + 1}`}
+                    {c.cards.length > 0 ? `${c.cards.length} RESULTS • PAGE ${c.page + 1}` : `0 RESULTS • PAGE ${c.page + 1}`}
                   </Text>
 
                   <View style={styles.perfBadge}>
                     <Ionicons name="flash" size={12} color={perfAccent} />
-                    <Text style={[styles.perfText, { color: perfAccent }]}>
-                      FAST • {c.durationMs}ms
-                    </Text>
+                    <Text style={[styles.perfText, { color: perfAccent }]}>FAST • {c.durationMs}ms</Text>
                   </View>
-
-                  {/* Optional hint so users understand what happened */}
-                  {keyword ? (
-                    <Text style={[styles.searchText, { marginTop: 6, opacity: 0.7 }]}>
-                      Refined by keywords: “{keyword}”
-                    </Text>
-                  ) : null}
                 </View>
 
                 <View style={styles.paginationRow}>
@@ -215,30 +249,23 @@ export default function SearchExperience({
               </View>
             ) : null}
 
-            {refinedProfiles.length > 0 && currentProfile ? (
-              <ProfileFocusView
-                profile={currentProfile}
-                // ✅ next/prev should move within refined list when keyword is active,
-                // but still allow pagination using the controller when crossing edges.
-                onNext={() => {
-                  if (safeIndex < refinedProfiles.length - 1) {
-                    // move focus locally by advancing controller index
-                    c.setIndex?.(safeIndex + 1);
-                    return;
-                  }
-                  // end of refined page: fall back to normal pagination behavior
-                  c.next();
+            {c.cards.length > 0 ? (
+              <FlatList
+                data={c.cards}
+                keyExtractor={keyExtractor}
+                renderItem={renderItem}
+                contentContainerStyle={{
+                  paddingHorizontal: contentPadding,
+                  paddingTop: 14,
+                  paddingBottom: 40,
+                  alignItems: 'stretch',
                 }}
-                onPrev={() => {
-                  if (safeIndex > 0) {
-                    c.setIndex?.(safeIndex - 1);
-                    return;
-                  }
-                  c.prev();
-                }}
-                onReport={onReport ?? (() => {})}
-                canPrev={c.page > 0 || safeIndex > 0}
-                canNext={c.hasNextPage || safeIndex < refinedProfiles.length - 1}
+                showsVerticalScrollIndicator={false}
+                removeClippedSubviews
+                initialNumToRender={10}
+                windowSize={9}
+                maxToRenderPerBatch={14}
+                updateCellsBatchingPeriod={50}
               />
             ) : c.appliedIsDefault ? (
               <View style={styles.emptyCenter}>
@@ -258,6 +285,29 @@ export default function SearchExperience({
           </View>
         )}
       </View>
+
+      <Modal visible={c.selectedIndex !== null && !!c.selectedProfile} animationType="slide" onRequestClose={c.closeFocus}>
+        <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+          <View style={styles.focusTopBar}>
+            <TouchableOpacity onPress={c.closeFocus} style={styles.closeBtn} activeOpacity={0.85}>
+              <Ionicons name="arrow-back" size={20} color={theme.colors.text} />
+              <Text style={styles.closeText}>Back to results</Text>
+            </TouchableOpacity>
+          </View>
+
+          {c.selectedProfile ? (
+            <ProfileFocusView
+              profile={{ id: c.selectedProfile.id }}
+              onPrev={() => {}}
+              onNext={() => {}}
+              onReport={onReport ?? (() => {})}
+              showNav={false}
+              canPrev={false}
+              canNext={false}
+            />
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -336,5 +386,29 @@ function makeStyles(theme: any) {
       padding: 40,
       backgroundColor: theme.colors.bg,
     },
+
+    focusTopBar: {
+      paddingTop: 12,
+      paddingBottom: 10,
+      paddingHorizontal: 14,
+      borderBottomWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+    },
+    closeBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8 as any,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      backgroundColor: theme.colors.surface2,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    closeText: { fontWeight: '900', color: theme.colors.text, fontSize: 12 },
   });
 }

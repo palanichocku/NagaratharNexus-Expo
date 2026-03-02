@@ -1,5 +1,5 @@
 // ./app/(tabs)/favorites/Favorites.tsx
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -8,144 +8,182 @@ import {
   Platform,
   TouchableOpacity,
   SafeAreaView,
+  FlatList,
+  Image,
+  useWindowDimensions,
+  Modal,
+  Alert,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
-import FilterPanel from '../search/FilterPanel';
 import ProfileFocusView from '../search/ProfileFocusView';
-import { favoriteService } from '../../../src/services/favorite.service';
-import { supabase } from '../../../src/lib/supabase';
 import ReportModal from '../search/ReportModal';
 
+import { supabase } from '../../../src/lib/supabase';
+import { favoriteService } from '../../../src/services/favorite.service';
+import type { ThinProfileCard } from '../../../src/services/search.service';
 import { useAppTheme } from '../../../src/theme/ThemeProvider';
+import { useFavoritesController } from '../../../src/features/favorites/useFavoritesController';
+import { ProfileThinTile } from '../../../src/components/ProfileThinTile';
 
 export default function FavoritesScreen() {
   const navigation = useNavigation();
   const { theme } = useAppTheme();
-
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const isWeb = Platform.OS === 'web';
+  const { width: windowW } = useWindowDimensions();
 
-  const [allFavorites, setAllFavorites] = useState<any[]>([]);
-  const [displayProfiles, setDisplayProfiles] = useState<any[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const fav = useFavoritesController();
+
+  // ✅ IMPORTANT: depend on functions, not the whole object (prevents flicker)
+  const refreshFavorites = fav.refresh;
+  const gotoPage = fav.gotoPage;
+  const closeFocus = fav.closeFocus;
+  const openByIndex = fav.openByIndex;
+  const removeFromLocal = fav.removeFromLocal;
+
   const [isPaused, setIsPaused] = useState(false);
+  const [checkingPause, setCheckingPause] = useState(true);
   const [isReportModalVisible, setReportModalVisible] = useState(false);
 
-  const isWeb = Platform.OS === 'web';
-
-  /**
-   * 🔄 REFRESH DATA ON TAB FOCUS
-   */
   useFocusEffect(
     useCallback(() => {
-      void syncAndLoad();
-    }, []),
+      let alive = true;
+
+      const run = async () => {
+        setCheckingPause(true);
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) {
+            if (alive) setIsPaused(false);
+            return;
+          }
+
+          const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('account_status')
+            .eq('id', user.id)
+            .single();
+
+          if (error) throw error;
+
+          const paused = profile?.account_status === 'INACTIVE';
+          if (!alive) return;
+
+          setIsPaused(paused);
+
+          if (!paused) {
+            // ✅ only refresh once per focus
+            refreshFavorites();
+          }
+        } catch (e) {
+          console.error('Failed to sync favorites:', e);
+        } finally {
+          if (alive) setCheckingPause(false);
+        }
+      };
+
+      void run();
+      return () => { alive = false; };
+    }, [refreshFavorites]),
   );
 
-  const syncAndLoad = async () => {
-    setLoading(true);
-    try {
-      // 1. Get current Auth User
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
+  // Match SearchExperience spacing rules
+const gutter = isWeb ? 24 : 16;
+const contentPadding = gutter;
 
-      // 2. Verify Own Profile Status (Fair-Play Check)
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('account_status')
-        .eq('id', user.id)
-        .single();
+const usableW = Math.max(320, windowW - (isWeb ? 340 : 0));
+const maxListW = isWeb ? 980 : 620; // give favorites same premium width feel
+const listW = Math.min(maxListW, usableW - contentPadding * 2);
 
-      const paused = profile?.account_status === 'INACTIVE';
-      setIsPaused(paused);
+// ✅ THIS is the important part: make the card narrower than listW
+const cardW = Math.max(300, Math.min(listW, isWeb ? listW - 40 : listW - 12));
 
-      // 3. Only fetch favorites if the user is NOT paused
-      if (!paused) {
-        const data = await favoriteService.getFavorites();
-        setAllFavorites(data);
-        setDisplayProfiles(data);
+  const keyExtractor = useCallback((item: ThinProfileCard) => String(item.id), []);
+
+  const handleUnfavorite = useCallback(
+    async (profileId: string) => {
+      if (!profileId) return;
+
+      // optimistic UI
+      removeFromLocal(profileId);
+
+      try {
+        await favoriteService.removeFavorite(profileId);
+      } catch (e) {
+        Alert.alert('Could not remove favorite', 'Please try again.');
+        // optional: refresh to re-sync
+        refreshFavorites();
       }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to sync favorites:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [removeFromLocal, refreshFavorites],
+  );
 
-  const handleFavoriteRemoved = useCallback((profileId: string) => {
-    // Remove from both sources of truth
-    setAllFavorites((prev) => prev.filter((p) => p.id !== profileId));
-    setDisplayProfiles((prev) => {
-      const next = prev.filter((p) => p.id !== profileId);
+  const renderItem = useCallback(
+    ({ item, index }: { item: ThinProfileCard; index: number }) => (
+      <ProfileThinTile
+        item={item}
+        theme={theme}
+        cardW={cardW}
+        onPress={() => openByIndex(index)}
+        isFavorited
+        favBusy={false}
+        onToggleFavorite={() => void handleUnfavorite(String(item.id))}
+        />
+    ),
+    [handleUnfavorite, listW, openByIndex, theme],
+  );
 
-      // Keep index valid after removal
-      setCurrentIndex((idx) => {
-        if (next.length === 0) return 0;
-        return Math.min(idx, next.length - 1);
-      });
-
-      return next;
-    });
-  }, []);
-
-  const handleApplyFilters = (filters: any) => {
-    if (isPaused) return;
-
-    const filtered = allFavorites.filter((p: any) => {
-      const age = parseInt(p.age || '0', 10);
-      if (age < (filters.minAge || 18) || age > (filters.maxAge || 60)) return false;
-
-      if (filters.kovils?.length > 0 && !filters.kovils.includes(p.kovil)) return false;
-
-      if (filters.query) {
-        const q = filters.query.toLowerCase();
-        return (
-          p.full_name?.toLowerCase().includes(q) ||
-          p.profession?.toLowerCase().includes(q)
-        );
-      }
-
-      return true;
-    });
-
-    setDisplayProfiles(filtered);
-    setCurrentIndex(0);
-  };
-
-  const currentProfile = displayProfiles[currentIndex];
-  const canPrev = displayProfiles.length > 0 && currentIndex > 0;
-  const canNext = displayProfiles.length > 0 && currentIndex < displayProfiles.length - 1;
-  const iconMuted = theme.colors.mutedText;
   const warnColor = theme.colors.warn ?? theme.colors.primary;
+  const perfAccent = theme.colors.success ?? theme.colors.primary;
+
+  const showModal = fav.selectedIndex !== null && !!fav.selectedProfile;
+
+  const showLoading = checkingPause || fav.loading;
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={[styles.container, isWeb && styles.webContainer]}>
-        {/* 🛠️ SIDEBAR FILTER */}
         <View style={styles.sidebar}>
-          <FilterPanel
-            filters={{}} // Initial empty filters
-            onFilterChange={handleApplyFilters}
-            totalResults={displayProfiles.length}
-          />
+          <View style={{ padding: 18 }}>
+            <Text style={{ fontSize: 18, fontWeight: '900', color: theme.colors.text }}>Favorites</Text>
+            <Text style={{ marginTop: 6, fontSize: 12, fontWeight: '700', color: theme.colors.mutedText }}>
+              Saved profiles, fast tiles + tap to open.
+            </Text>
+
+            <TouchableOpacity
+              onPress={refreshFavorites}
+              style={{
+                marginTop: 14,
+                alignSelf: 'flex-start',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8 as any,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surface,
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="refresh" size={16} color={theme.colors.primary} />
+              <Text style={{ fontWeight: '900', color: theme.colors.primary, fontSize: 12 }}>Refresh</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.content}>
-          {loading ? (
+          {showLoading ? (
             <ActivityIndicator size="large" color={theme.colors.text} />
           ) : isPaused ? (
-            /* 🛡️ FAIR-PLAY RESTRICTION UI */
             <View style={styles.restrictedContainer}>
               <Ionicons name="lock-closed-outline" size={64} color={warnColor} />
               <Text style={styles.titleText}>Favorites Restricted</Text>
               <Text style={styles.subText}>
-                Your profile is currently paused. To view your saved matches, you must resume your
-                profile in Settings.
+                Your profile is currently paused. To view your saved matches, resume your profile in Settings.
               </Text>
               <TouchableOpacity
                 style={styles.resumeBtn}
@@ -155,35 +193,64 @@ export default function FavoritesScreen() {
                 <Text style={styles.resumeBtnText}>Go to Settings</Text>
               </TouchableOpacity>
             </View>
-          ) : displayProfiles.length > 0 ? (
-            /* ⭐ FAVORITES VIEW */
-            <View style={styles.focusContainer}>
-              <View style={styles.topActionRow}>
-                <View style={styles.countChip}>
-                  <Text style={styles.perfText}>
-                    {currentIndex + 1} OF {displayProfiles.length} FAVORITES
+          ) : fav.cards.length > 0 ? (
+            <View style={{ flex: 1, width: '100%' }}>
+              <View style={styles.searchHeader}>
+                <View>
+                  <Text style={styles.searchText}>
+                    {fav.cards.length} FAVORITES • PAGE {fav.page + 1}
                   </Text>
+
+                  <View style={styles.perfBadge}>
+                    <Ionicons name="flash" size={12} color={perfAccent} />
+                    <Text style={[styles.perfText, { color: perfAccent }]}>
+                      FAST • {fav.durationMs}ms
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.paginationRow}>
+                  <TouchableOpacity
+                    disabled={!fav.canPrevPage}
+                    onPress={() => gotoPage(fav.page - 1)}
+                    style={[styles.pageBtn, !fav.canPrevPage && { opacity: 0.3 }]}
+                  >
+                    <Ionicons name="chevron-back" size={18} color={theme.colors.primary} />
+                  </TouchableOpacity>
+
+                  <View style={styles.pageIndicator}>
+                    <Text style={styles.pageText}>{fav.page + 1}</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    disabled={!fav.canNextPage}
+                    onPress={() => gotoPage(fav.page + 1)}
+                    style={[styles.pageBtn, !fav.canNextPage && { opacity: 0.3 }]}
+                  >
+                    <Ionicons name="chevron-forward" size={18} color={theme.colors.primary} />
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              <ProfileFocusView
-                profile={displayProfiles[currentIndex]}
-                  onNext={() => {
-                    if (!canNext) return;
-                    setCurrentIndex((i) => i + 1);
-                  }}
-                  onPrev={() => {
-                    if (!canPrev) return;
-                    setCurrentIndex((i) => i - 1);
-                  }}
-                  onReport={() => setReportModalVisible(true)}
-                  canPrev={canPrev}
-                  canNext={canNext}
-                  onFavoriteRemoved={handleFavoriteRemoved}
+              <FlatList
+                data={fav.cards}
+                keyExtractor={keyExtractor}
+                renderItem={renderItem}
+                contentContainerStyle={{
+                  paddingHorizontal: contentPadding,
+                  paddingTop: 14,
+                  paddingBottom: 40,
+                  alignItems: 'stretch', // ✅ let cardW + alignSelf center do the job
+                }}
+                showsVerticalScrollIndicator={false}
+                removeClippedSubviews
+                initialNumToRender={10}
+                windowSize={9}
+                maxToRenderPerBatch={14}
+                updateCellsBatchingPeriod={50}
               />
             </View>
           ) : (
-            /* 🏜️ EMPTY STATE */
             <View style={styles.emptyContainer}>
               <Ionicons name="star-outline" size={60} color={theme.colors.border} />
               <Text style={styles.emptyTitle}>No Favorites Found</Text>
@@ -195,68 +262,69 @@ export default function FavoritesScreen() {
         </View>
       </View>
 
-      {/* 🚩 Report Modal */}
-      {currentProfile && (
+      <Modal visible={showModal} animationType="slide" onRequestClose={closeFocus}>
+        <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+          <View style={styles.focusTopBar}>
+            <TouchableOpacity onPress={closeFocus} style={styles.closeBtn} activeOpacity={0.85}>
+              <Ionicons name="arrow-back" size={20} color={theme.colors.text} />
+              <Text style={styles.closeText}>Back to favorites</Text>
+            </TouchableOpacity>
+          </View>
+
+          {fav.selectedProfile ? (
+            <ProfileFocusView
+              profile={{ id: fav.selectedProfile.id }}
+              onPrev={() => {}}
+              onNext={() => {}}
+              onReport={() => setReportModalVisible(true)}
+              showNav={false}
+              canPrev={false}
+              canNext={false}
+            />
+          ) : null}
+        </View>
+      </Modal>
+
+      {fav.selectedProfile ? (
         <ReportModal
           visible={isReportModalVisible}
-          targetUserId={currentProfile.id}
+          targetUserId={String(fav.selectedProfile.id)}
           onClose={() => setReportModalVisible(false)}
         />
-      )}
+      ) : null}
     </SafeAreaView>
   );
 }
 
 function makeStyles(theme: any) {
-  const s = theme.spacing;
   const r = theme.radius;
+  const s = theme.spacing;
 
   return StyleSheet.create({
     safe: { flex: 1, backgroundColor: theme.colors.bg },
 
     container: { flex: 1, flexDirection: 'row', backgroundColor: theme.colors.bg },
-    webContainer: { paddingLeft: 80 },
+    webContainer: { flexDirection: 'row' },
 
     sidebar: {
-      width: 320,
+      width: 340,
       borderRightWidth: 1,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface2,
       display: Platform.OS === 'web' ? 'flex' : 'none',
     },
 
-    content: {
+    content: { flex: 1, backgroundColor: theme.colors.bg },
+
+    restrictedContainer: {
       flex: 1,
-      justifyContent: 'center',
       alignItems: 'center',
-      backgroundColor: theme.colors.bg,
-      padding: s.md,
+      justifyContent: 'center',
+      padding: 40,
+      maxWidth: 520,
+      alignSelf: 'center',
     },
-
-    focusContainer: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
-
-    topActionRow: { position: 'absolute', top: 16, left: 16, zIndex: 10 },
-
-    countChip: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
-      backgroundColor: theme.colors.surface2,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-    },
-
-    perfText: {
-      fontSize: 10,
-      color: theme.colors.text,
-      fontWeight: '900',
-      letterSpacing: 0.7,
-    },
-
-    restrictedContainer: { alignItems: 'center', padding: 40, maxWidth: 520 },
-
     titleText: { fontSize: 24, fontWeight: '900', marginTop: 20, color: theme.colors.text },
-
     subText: {
       fontSize: 15,
       color: theme.colors.mutedText,
@@ -265,7 +333,6 @@ function makeStyles(theme: any) {
       lineHeight: 22,
       fontWeight: '600',
     },
-
     resumeBtn: {
       marginTop: 25,
       backgroundColor: theme.colors.primary,
@@ -276,13 +343,17 @@ function makeStyles(theme: any) {
       alignItems: 'center',
       gap: 10,
     },
-
     resumeBtnText: { color: theme.colors.primaryText, fontWeight: '900', fontSize: 15 },
 
-    emptyContainer: { alignItems: 'center', padding: 20, maxWidth: 520 },
-
+    emptyContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 20,
+      maxWidth: 520,
+      alignSelf: 'center',
+    },
     emptyTitle: { fontSize: 18, fontWeight: '900', color: theme.colors.text, marginTop: 15 },
-
     emptySub: {
       fontSize: 14,
       color: theme.colors.mutedText,
@@ -292,5 +363,70 @@ function makeStyles(theme: any) {
       fontWeight: '600',
       lineHeight: 20,
     },
+
+    searchHeader: {
+      width: '100%',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 20,
+      backgroundColor: theme.colors.surface,
+      borderBottomWidth: 1,
+      borderColor: theme.colors.border,
+    },
+
+    searchText: { fontSize: 11, fontWeight: '800', color: theme.colors.text },
+
+    perfBadge: {
+      marginTop: 6,
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.colors.surface2,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    perfText: { marginLeft: 6, fontSize: 11, fontWeight: '800' },
+
+    paginationRow: { flexDirection: 'row', alignItems: 'center', gap: 12 as any },
+    pageBtn: { padding: 6, borderRadius: 8, backgroundColor: theme.colors.bg },
+    pageIndicator: {
+      backgroundColor: theme.colors.primary,
+      width: 24,
+      height: 24,
+      borderRadius: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    pageText: { color: theme.colors.surface2, fontSize: 11, fontWeight: '900' },
+
+    focusTopBar: {
+      paddingTop: 12,
+      paddingBottom: 10,
+      paddingHorizontal: 14,
+      borderBottomWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+    },
+    closeBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8 as any,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      backgroundColor: theme.colors.surface2,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    closeText: { fontWeight: '900', color: theme.colors.text, fontSize: 12 },
+
+    pad: { padding: s?.md ?? 16 },
   });
 }
