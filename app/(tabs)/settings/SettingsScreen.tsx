@@ -74,85 +74,100 @@ export default function SettingsScreen() {
   }
 };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.replace('/(auth)/login');
-  };
+const handleLogout = async () => {
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
 
-  const handleDeactivate = async () => {
-    Alert.alert(
-      'Make Account Inactive',
-      'Your profile will no longer appear in search. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          style: 'destructive',
-          onPress: async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
+    // ✅ Always use public path (no route group)
+    router.replace('/login');
 
-            await supabase
-              .from('profiles')
-              .update({ account_status: 'INACTIVE' })
-              .eq('id', user.id);
-
-            await supabase.auth.signOut();
-            router.replace('/(auth)/login');
-          },
-        },
-      ],
-    );
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
-    );
+    // ✅ Web hard fallback (still public path)
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.assign('/login');
+    }
+  } catch (e: any) {
+    const msg = e?.message || 'Please try again.';
+    Platform.OS === 'web'
+      ? alert(`Sign out failed: ${msg}`)
+      : Alert.alert('Sign out failed', msg);
   }
+};
 
-  const tint = (theme.colors as any).tint ?? theme.colors.primary;
+const handleDeactivate = async () => {
+  Alert.alert(
+    'Make Account Inactive',
+    'Your profile will no longer appear in search. Continue?',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Confirm',
+        style: 'destructive',
+        onPress: async () => {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return;
 
-  const ThemePicker = () => (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>Appearance</Text>
+          await supabase
+            .from('profiles')
+            .update({ account_status: 'INACTIVE' })
+            .eq('id', user.id);
 
-      <View style={styles.row}>
-        <View style={styles.rowLeft}>
-          <View style={[styles.iconPill, { backgroundColor: `${tint}18` }]}>
-            <Ionicons name="color-palette-outline" size={16} color={tint} />
-          </View>
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>Theme</Text>
-            <Text style={styles.rowSub}>
-              Choose Warm or Cool. Your choice overrides the global default on this device.
-            </Text>
-          </View>
-        </View>
-      </View>
+          await supabase.auth.signOut();
+          router.replace('/(auth)/login');
+        },
+      },
+    ],
+  );
+};
 
-      <View style={styles.themeChipRow}>
-        {availableThemes.map((t) => {
-          const active = t === themeName;
-          return (
-            <TouchableOpacity
-              key={t}
-              accessibilityRole="button"
-              onPress={() => setThemeName(t)}
-              activeOpacity={0.9}
-              style={[styles.themeChip, active ? styles.themeChipActive : styles.themeChipIdle]}
-            >
-              <Text style={[styles.themeChipText, active ? styles.themeChipTextActive : styles.themeChipTextIdle]}>
-                {String(t).toUpperCase()}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+if (loading) {
+  return (
+    <View style={styles.center}>
+      <ActivityIndicator size="large" color={theme.colors.primary} />
     </View>
   );
+}
+
+const tint = (theme.colors as any).tint ?? theme.colors.primary;
+
+const ThemePicker = () => (
+  <View style={styles.card}>
+    <Text style={styles.cardTitle}>Appearance</Text>
+
+    <View style={styles.row}>
+      <View style={styles.rowLeft}>
+        <View style={[styles.iconPill, { backgroundColor: `${tint}18` }]}>
+          <Ionicons name="color-palette-outline" size={16} color={tint} />
+        </View>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>Theme</Text>
+          <Text style={styles.rowSub}>
+            Choose Warm or Cool. Your choice overrides the global default on this device.
+          </Text>
+        </View>
+      </View>
+    </View>
+
+    <View style={styles.themeChipRow}>
+      {availableThemes.map((t) => {
+        const active = t === themeName;
+        return (
+          <TouchableOpacity
+            key={t}
+            accessibilityRole="button"
+            onPress={() => setThemeName(t)}
+            activeOpacity={0.9}
+            style={[styles.themeChip, active ? styles.themeChipActive : styles.themeChipIdle]}
+          >
+            <Text style={[styles.themeChipText, active ? styles.themeChipTextActive : styles.themeChipTextIdle]}>
+              {String(t).toUpperCase()}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  </View>
+);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
