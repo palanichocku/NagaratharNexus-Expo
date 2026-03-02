@@ -184,25 +184,21 @@ export default function AdminDashboard() {
 
   const handleSignOut = async () => {
   try {
-    // ✅ Always clear any magic-link tokens from URL on web
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // remove query + hash (access_token/code/etc)
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
 
-    // ✅ Force UI to leave immediately
-    router.replace('/(auth)/login');
+    // ✅ Always use public path (no route group)
+    router.replace('/login');
 
-    // ✅ Web safety: if router gets ignored for any reason, hard navigate
+    // ✅ Web hard fallback (still public path)
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.assign('/(auth)/login');
+      window.location.assign('/login');
     }
   } catch (e: any) {
     const msg = e?.message || 'Please try again.';
-    Platform.OS === 'web' ? alert(`Sign out failed: ${msg}`) : Alert.alert('Sign out failed', msg);
+    Platform.OS === 'web'
+      ? alert(`Sign out failed: ${msg}`)
+      : Alert.alert('Sign out failed', msg);
   }
 };
     
