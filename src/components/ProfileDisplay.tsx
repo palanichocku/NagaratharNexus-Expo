@@ -107,24 +107,21 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
 
   const handleSignOut = async () => {
     try {
-      console.log('Signing out user...');
-
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-
-      // Double-check session is cleared
-      const { data } = await supabase.auth.getSession();
-      console.log('Session after signOut:', data.session);
-
-      // Force UI to leave immediately
-      router.replace('/(auth)/login');
-
-      // ✅ Web: hard reload prevents any stale in-memory routing/session
-      if (Platform.OS === 'web') {
-        window.location.href = '/(auth)/login';
+  
+      // ✅ Always use public path (no route group)
+      router.replace('/login');
+  
+      // ✅ Web hard fallback (still public path)
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign('/login');
       }
     } catch (e: any) {
-      Alert.alert('Sign out failed', e?.message || 'Please try again.');
+      const msg = e?.message || 'Please try again.';
+      Platform.OS === 'web'
+        ? alert(`Sign out failed: ${msg}`)
+        : Alert.alert('Sign out failed', msg);
     }
   };
 
