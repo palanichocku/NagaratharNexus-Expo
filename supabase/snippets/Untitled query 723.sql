@@ -1,0 +1,1 @@
+DELETE FROM auth.users WHERE email IN ('admin1@nexus.com', 'mod1@nexus.com');

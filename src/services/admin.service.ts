@@ -118,35 +118,31 @@ export const adminService = {
     }
   },
   
-  async logAction(action: keyof typeof AUDIT_SETTINGS.levels, details: string, targetId?: string) {
-    if (!AUDIT_SETTINGS.enabled || !AUDIT_SETTINGS.levels[action]) return;
-
-    // ✅ Only set target_id if it is a UUID (audit_logs.target_id is uuid)
-    const isUuid = (v?: string) =>
-      typeof v === 'string' &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v.trim());
+  async testAuditLogInsert() {
+    if (!AUDIT_SETTINGS.enabled || !AUDIT_SETTINGS.levels.PROFILE_APPROVAL) {
+      return { success: false, error: 'Audit logging is disabled.' };
+    }
 
     try {
-      const { data: { user }, error: uErr } = await supabase.auth.getUser();
-      if (uErr) throw uErr;
-
-      // If there is no logged-in user, don’t attempt to write an audit row
-      // (avoids FK/RLS weirdness and noisy console errors)
-      if (!user?.id) return;
-
       const payload = {
-        action: String(action),
-        details,
-        actor_id: user.id,
-        actor_email: user.email ?? null,
-        timestamp: new Date().toISOString(),
-        target_id: isUuid(targetId) ? targetId : null,
+        action: 'PROFILE_APPROVAL',
+        details: 'Manual audit log test from Admin Dashboard',
+        target_id: null,
       };
 
-      const { error } = await supabase.from('audit_logs').insert(payload);
+      const { data, error } = await supabase
+        .from('audit_logs')
+        .insert(payload)
+        .select()
+        .single();
+
       if (error) throw error;
-    } catch (error) {
-      console.error('🕵️ Audit Log failed:', error);
+
+      console.log('✅ Audit log test row inserted:', data);
+      return { success: true, data };
+    } catch (err: any) {
+      console.error('❌ Audit log test failed:', err);
+      return { success: false, error: err?.message || 'Unknown error' };
     }
   },
 
@@ -166,6 +162,31 @@ export const adminService = {
       reporterName: report.reporter?.full_name || 'Unknown',
       targetName: report.target?.full_name || 'Unknown'
     }));
+  },
+
+  async logAction(action: keyof typeof AUDIT_SETTINGS.levels, details: string, targetId?: string) {
+    if (!AUDIT_SETTINGS.enabled || !AUDIT_SETTINGS.levels[action]) return;
+
+    const isUuid = (v?: string) =>
+      typeof v === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v.trim());
+
+    try {
+      const { data: { user }, error: uErr } = await supabase.auth.getUser();
+      if (uErr) throw uErr;
+      if (!user?.id) return;
+
+      const payload = {
+        action: String(action),
+        details,
+        target_id: isUuid(targetId) ? targetId : null,
+      };
+
+      const { error } = await supabase.from('audit_logs').insert(payload);
+      if (error) throw error;
+    } catch (error) {
+      console.error('🕵️ Audit Log failed:', error);
+    }
   },
 
   // --- 2. USER MANAGEMENT (Manual Join for Cache Resilience) ---
@@ -470,7 +491,9 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
 
     try {
       // 🚀 Single RPC call replaces thousands of individual delete requests
-      const { data: count, error } = await supabase.rpc('purge_test_data');
+      console.time('purge_test_data');
+      const { data: count, error } = await supabase.rpc('purge_test_data', { batch_size: 500 });
+      console.timeEnd('purge_test_data');
 
       if (error) throw error;
 

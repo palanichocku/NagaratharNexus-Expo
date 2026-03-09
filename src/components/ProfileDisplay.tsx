@@ -28,11 +28,12 @@ import {
   SiblingsEditor,
 } from '../profileForm/profileFormKit';
 import { router } from 'expo-router';
+import SignOutButton from '@/src/components/SignOutButton';
+import { EXPECTATIONS_QUESTIONS, EXPECTATIONS_QUESTION_MAP } from '../constants/expectationsQuestions';
 
 function computeAge(dob: string | null | undefined): number | null {
   if (!dob || typeof dob !== 'string') return null;
 
-  // Expecting YYYY-MM-DD
   const parts = dob.split('-').map((p) => Number(p));
   if (parts.length !== 3) return null;
 
@@ -42,13 +43,36 @@ function computeAge(dob: string | null | undefined): number | null {
   const today = new Date();
   let age = today.getFullYear() - year;
 
-  const m = today.getMonth() + 1; // 1-12
+  const m = today.getMonth() + 1;
   const d = today.getDate();
 
-  // If birthday hasn't happened yet this year, subtract 1
   if (m < month || (m === month && d < day)) age -= 1;
 
   return age >= 0 && age < 130 ? age : null;
+}
+
+function parseExpectationsPayload(value: any): Record<string, string> | null {
+  if (!value) return null;
+
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return Object.keys(value).length ? value : null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
@@ -58,37 +82,36 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
   const [currentUserRole, setCurrentUserRole] = useState<string>('USER');
-  
 
   useEffect(() => {
-  let isMounted = true;
+    let isMounted = true;
 
-  supabase.auth.getUser().then(async ({ data }) => {
-    const uid = data.user?.id || null;
-    const email = data.user?.email || '';
-
-    if (!isMounted) return;
-
-    setCurrentUserId(uid);
-    setCurrentUserEmail(email);
-
-    if (uid) {
-      const { data: p } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', uid)
-        .maybeSingle();
+    supabase.auth.getUser().then(async ({ data }) => {
+      const uid = data.user?.id || null;
+      const email = data.user?.email || '';
 
       if (!isMounted) return;
 
-      setCurrentUserRole(String(p?.role || 'USER').toUpperCase());
-    }
-  });
+      setCurrentUserId(uid);
+      setCurrentUserEmail(email);
 
-  return () => {
-    isMounted = false;
-  };
-}, []);
+      if (uid) {
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', uid)
+          .maybeSingle();
+
+        if (!isMounted) return;
+
+        setCurrentUserRole(String(p?.role || 'USER').toUpperCase());
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const theme = useMemo(
     () => ({
@@ -109,11 +132,9 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-  
-      // ✅ Always use public path (no route group)
+
       router.replace('/login');
-  
-      // ✅ Web hard fallback (still public path)
+
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.location.assign('/login');
       }
@@ -129,7 +150,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
 
   if (!profile) return null;
 
-  // ✅ Bridge DB snake_case to UI camelCase keys (schema keys)
   const displayProfile = {
     ...profile,
 
@@ -203,7 +223,7 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
     (!!currentUserEmail &&
       String(currentUserEmail).toLowerCase() ===
         String((profile as any)?.email || (displayProfile as any)?.email || '').toLowerCase());
-  
+
   const isSelf = canEditProfile;
   const isStaff = currentUserRole === 'ADMIN' || currentUserRole === 'MODERATOR';
   const canViewPrivateContact = canEditProfile || isStaff;
@@ -234,9 +254,69 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
     }
   };
 
-  const renderViewValue = (field: ProfileFieldSchema, val: any) => {
+const renderExpectationsView = (val: any) => {
+  const parsed = parseExpectationsPayload(val);
 
-    // Privacy: hide phone/email for non-owners
+  if (!parsed) {
+    return (
+      <Text style={[styles.fieldValue, styles.longText]}>
+        {val || 'N/A'}
+      </Text>
+    );
+  }
+
+  const answeredItems = EXPECTATIONS_QUESTIONS
+    .map((item) => {
+      const answer = String(parsed[item.id] ?? '').trim();
+      return {
+        ...item,
+        answer,
+      };
+    })
+    .filter((item) => item.answer.length > 0);
+
+  if (!answeredItems.length) {
+    return <Text style={styles.emptyValue}>None listed</Text>;
+  }
+
+  return (
+    <View style={styles.expectationsList}>
+      {answeredItems.map((item) => (
+        <View key={item.id} style={styles.expectationCard}>
+          <View style={styles.expectationTopRow}>
+            <View style={styles.expectationBadge}>
+              <Text style={styles.expectationBadgeText}>{item.shortLabel}</Text>
+            </View>
+            <Text style={styles.expectationQuestion}>{item.q}</Text>
+          </View>
+
+          <View style={styles.expectationAnswerWrap}>
+            <Text style={styles.expectationAnswer}>{item.answer}</Text>
+          </View>
+        </View>
+      ))}
+
+      {Object.keys(parsed)
+        .filter((key) => !EXPECTATIONS_QUESTION_MAP[key] && String(parsed[key] ?? '').trim())
+        .map((key) => (
+          <View key={key} style={styles.expectationCard}>
+            <View style={styles.expectationTopRow}>
+              <View style={styles.expectationBadge}>
+                <Text style={styles.expectationBadgeText}>{key.toUpperCase()}</Text>
+              </View>
+              <Text style={styles.expectationQuestion}>Additional response</Text>
+            </View>
+
+            <View style={styles.expectationAnswerWrap}>
+              <Text style={styles.expectationAnswer}>{String(parsed[key] ?? '')}</Text>
+            </View>
+          </View>
+        ))}
+    </View>
+  );
+};
+
+  const renderViewValue = (field: ProfileFieldSchema, val: any) => {
     if (!canViewPrivateContact && field.key === 'phone' && displayProfile.hidePhone) {
       return <Text style={styles.privateValue}>[Private]</Text>;
     }
@@ -245,7 +325,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       return <Text style={styles.privateValue}>[Private]</Text>;
     }
 
-    // ✅ DOB: show age nicely
     if (field.key === 'dob') {
       const dobStr = typeof val === 'string' ? val : '';
       const age = computeAge(dobStr);
@@ -253,7 +332,8 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       return (
         <View>
           <Text style={styles.fieldValue}>
-            {dobStr || 'N/A'}{age !== null ? ` (${age})` : ''}
+            {dobStr || 'N/A'}
+            {age !== null ? ` (${age})` : ''}
           </Text>
           {age !== null ? (
             <Text style={styles.ageSubText}>{age} years old</Text>
@@ -261,7 +341,7 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
         </View>
       );
     }
-    
+
     if (field.type === 'education_history') {
       const arr = Array.isArray(val) ? val : [];
       if (!arr.length) return <Text style={styles.emptyValue}>None listed</Text>;
@@ -269,7 +349,9 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
         <>
           {arr.map((edu: any, i: number) => (
             <Text key={i} style={styles.fieldValue}>
-              • {edu.level || '?'}{edu.field ? ` in ${edu.field}` : ''}{edu.university ? ` (${edu.university})` : ''}
+              • {edu.level || '?'}
+              {edu.field ? ` in ${edu.field}` : ''}
+              {edu.university ? ` (${edu.university})` : ''}
             </Text>
           ))}
         </>
@@ -283,7 +365,9 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
         <>
           {arr.map((sib: any, i: number) => (
             <Text key={i} style={styles.fieldValue}>
-              • {sib.name || 'Name?'}{sib.maritalStatus ? ` (${sib.maritalStatus})` : ''}{sib.occupation ? ` - ${sib.occupation}` : ''}
+              • {sib.name || 'Name?'}
+              {sib.maritalStatus ? ` (${sib.maritalStatus})` : ''}
+              {sib.occupation ? ` - ${sib.occupation}` : ''}
             </Text>
           ))}
         </>
@@ -297,7 +381,7 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
     }
 
     if (field.key === 'expectations') {
-      return <Text style={[styles.fieldValue, styles.longText]}>{val || 'N/A'}</Text>;
+      return renderExpectationsView(val);
     }
 
     if (val && typeof val === 'object') {
@@ -310,28 +394,27 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
   const renderEditField = (field: ProfileFieldSchema) => {
     const key = field.key;
 
-    // DOB web-only input
-    // ✅ DOB: show age nicely
-    // DOB web-only input 
-    if (key === 'dob') { 
-      return ( 
-        <input 
-          type="date" value={tempData.dob || ''} 
-          onChange={(e) => setTempData({ ...tempData, dob: e.target.value })} 
-          style={webDateInputStyle} /> 
-        ); 
+    if (key === 'dob') {
+      return (
+        <input
+          type="date"
+          value={tempData.dob || ''}
+          onChange={(e) => setTempData({ ...tempData, dob: e.target.value })}
+          style={webDateInputStyle}
+        />
+      );
     }
 
-    // Non-editable fields
     if (field.editable === false) {
       return (
         <View style={styles.readonlyBox}>
-          <Text style={styles.readonlyText}>{String(tempData[key] || displayProfile[key] || 'N/A')}</Text>
+          <Text style={styles.readonlyText}>
+            {String(tempData[key] || displayProfile[key] || 'N/A')}
+          </Text>
         </View>
       );
     }
 
-    // Country picker (open-source Country-State-City)
     if (field.type === 'country') {
       return (
         <FormSelect
@@ -339,7 +422,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
           placeholder={`Select ${field.label}`}
           data={countryOptions}
           onChangeValue={(v) => {
-            // If residentCountry changed, clear state
             if (key === 'residentCountry') {
               setTempData({ ...tempData, residentCountry: v, currentState: '' });
               return;
@@ -351,7 +433,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       );
     }
 
-    // State picker depends on residentCountry
     if (field.type === 'state') {
       const states = getStateOptions(tempData.residentCountry || displayProfile.residentCountry);
       if (!states.length) {
@@ -375,7 +456,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       );
     }
 
-    // Height stepper
     if (field.type === 'height') {
       return (
         <HeightStepper
@@ -386,7 +466,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       );
     }
 
-    // Education history repeater
     if (field.type === 'education_history') {
       return (
         <EducationEditor
@@ -397,7 +476,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       );
     }
 
-    // Siblings repeater
     if (field.type === 'siblings_list') {
       return (
         <SiblingsEditor
@@ -408,7 +486,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       );
     }
 
-    // Multi select
     if (field.type === 'multiselect') {
       const data = (PROFILE_FIELD_OPTIONS as any)[key] || [];
       return (
@@ -422,9 +499,7 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       );
     }
 
-    // Select (appData-driven)
     if (field.type === 'select') {
-      // Special: citizenship should be open-source country list (not typed)
       if (key === 'citizenship') {
         return (
           <FormSelect
@@ -437,14 +512,11 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
         );
       }
 
-      // Special: pirivu depends on kovil; clear if kovil has no pirivus
       if (key === 'pirivu') {
         const kovil = tempData.kovil || displayProfile.kovil;
         const pirivuOptions = getPirivuOptions(kovil);
         if (!pirivuOptions.length) {
-          // If no pirivus for this kovil, force clear
           if (tempData.pirivu) {
-            // avoid setState loop by only clearing when needed
             setTimeout(() => {
               setTempData((prev: any) => ({ ...prev, pirivu: '' }));
             }, 0);
@@ -469,7 +541,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
         );
       }
 
-      // Special: kovil change should clear pirivu if invalid
       if (key === 'kovil') {
         const data = (PROFILE_FIELD_OPTIONS as any)[key] || [];
         return (
@@ -504,7 +575,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       );
     }
 
-    // Default free-form text
     return (
       <FormTextInput
         value={String(tempData[key] ?? '')}
@@ -516,7 +586,6 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
   };
 
   return (
-    
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <View style={{ position: 'relative' }}>
         <Image
@@ -524,10 +593,11 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
           style={styles.heroPhoto}
         />
         {canEditProfile && (
-          <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
-            <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
-            <Text style={styles.signOutText}>Sign Out</Text>
-          </TouchableOpacity>
+          <SignOutButton
+            variant="row"
+            label="SIGN OUT"
+            style={styles.signOutBtn}
+          />
         )}
       </View>
 
@@ -584,17 +654,16 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
                     field.type === 'siblings_list' ||
                     field.key === 'expectations';
 
-                const value = (displayProfile as any)[field.key];
+                  const value = (displayProfile as any)[field.key];
 
-                return (
-                  <View key={field.key} style={fullWidth ? styles.fullWidthItem : styles.gridItem}>
-                    <Text style={styles.fieldLabel}>{field.label}</Text>
-                    {isEditingThis ? renderEditField(field) : renderViewValue(field, value)}
-                  </View>
-                );
-              })}
+                  return (
+                    <View key={field.key} style={fullWidth ? styles.fullWidthItem : styles.gridItem}>
+                      <Text style={styles.fieldLabel}>{field.label}</Text>
+                      {isEditingThis ? renderEditField(field) : renderViewValue(field, value)}
+                    </View>
+                  );
+                })}
             </View>
-
           </View>
         );
       })}
@@ -654,7 +723,6 @@ const styles = StyleSheet.create({
     rowGap: 15,
   },
 
-  // 3-per-row on web and native; % math works well with gap
   gridItem: {
     width: '30%',
     marginBottom: 20,
@@ -690,13 +758,76 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     lineHeight: 22,
   },
+
+  expectationsList: {
+    width: '100%',
+    marginTop: 4,
+    gap: 10,
+  },
+
+  expectationCard: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    backgroundColor: '#FAFAFA',
+    padding: 12,
+  },
+
+  expectationTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+
+  expectationBadge: {
+    minWidth: 44,
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+
+  expectationBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#6B7280',
+    letterSpacing: 0.4,
+  },
+
+  expectationQuestion: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '800',
+    color: '#374151',
+    paddingTop: 4,
+  },
+
+  expectationAnswerWrap: {
+    marginTop: 10,
+    paddingLeft: 54,
+  },
+
+  expectationAnswer: {
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
+    color: '#111827',
+  },
+
   privateValue: {
-  fontSize: 14,
-  fontWeight: '800',
-  color: '#6B7280',
-  letterSpacing: 0.3,
-},
-ageSubText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#6B7280',
+    letterSpacing: 0.3,
+  },
+
+  ageSubText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#6B7280',

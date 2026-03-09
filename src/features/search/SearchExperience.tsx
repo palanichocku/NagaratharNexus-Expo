@@ -20,7 +20,7 @@ import FilterPanel from '../../../app/(tabs)/search/FilterPanel';
 import ProfileFocusView from '../../../app/(tabs)/search/ProfileFocusView';
 
 import { useUnifiedSearchController } from './useUnifiedSearchController';
-import { DEFAULT_FILTERS, type SearchContext } from './types';
+import { DEFAULT_FILTERS, PAGE_SIZE, type SearchContext } from './types';
 import type { ThinProfileCard } from '../../services/search.service';
 
 import { supabase } from '../../lib/supabase';
@@ -194,6 +194,12 @@ export default function SearchExperience({
     [c, cardW, theme, favSet, favBusy, toggleFavorite],
   );
 
+  // ✅ “Showing X–Y” (no total count; no extra DB query)
+  const hasResults = c.cards.length > 0;
+  const startIndex = hasResults ? c.page * PAGE_SIZE + 1 : 0;
+  const endIndex = hasResults ? startIndex + c.cards.length - 1 : 0;
+  const showingLabel = hasResults ? `Showing ${startIndex}–${endIndex}` : 'No results';
+
   return (
     <View style={[styles.container, isWeb && styles.webContainer]}>
       <View style={styles.sidebar}>
@@ -202,6 +208,8 @@ export default function SearchExperience({
           onFilterChange={c.onDraftChange}
           onApply={c.apply}
           totalResults={c.cards.length}
+          page={c.page}
+          hasNextPage={c.hasNextPage}
         />
       </View>
 
@@ -215,13 +223,13 @@ export default function SearchExperience({
             {showHeader ? (
               <View style={styles.searchHeader}>
                 <View>
-                  <Text style={styles.searchText}>
-                    {c.cards.length > 0 ? `${c.cards.length} RESULTS • PAGE ${c.page + 1}` : `0 RESULTS • PAGE ${c.page + 1}`}
-                  </Text>
+                  <Text style={styles.searchText}>{showingLabel}</Text>
 
                   <View style={styles.perfBadge}>
                     <Ionicons name="flash" size={12} color={perfAccent} />
-                    <Text style={[styles.perfText, { color: perfAccent }]}>FAST • {c.durationMs}ms</Text>
+                    <Text style={[styles.perfText, { color: perfAccent }]}>
+                      FAST • {c.durationMs}ms
+                    </Text>
                   </View>
                 </View>
 
@@ -286,7 +294,11 @@ export default function SearchExperience({
         )}
       </View>
 
-      <Modal visible={c.selectedIndex !== null && !!c.selectedProfile} animationType="slide" onRequestClose={c.closeFocus}>
+      <Modal
+        visible={c.selectedIndex !== null && !!c.selectedProfile}
+        animationType="slide"
+        onRequestClose={c.closeFocus}
+      >
         <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
           <View style={styles.focusTopBar}>
             <TouchableOpacity onPress={c.closeFocus} style={styles.closeBtn} activeOpacity={0.85}>

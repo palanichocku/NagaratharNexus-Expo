@@ -13,8 +13,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 const fetchWithTimeout: typeof fetch = (input, init) => {
+  // 🚀 INCREASE TIMEOUT: 12s is very short for image uploads on mobile/web
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 60000); // 60 seconds is safer
 
   return fetch(input, { ...(init || {}), signal: controller.signal })
     .finally(() => clearTimeout(timeout));

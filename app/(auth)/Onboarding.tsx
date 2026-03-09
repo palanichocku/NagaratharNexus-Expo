@@ -1,5 +1,4 @@
-// ./app/(auth)/Onboarding.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,19 +6,26 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   Image,
   ActivityIndicator,
   Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../../src/lib/supabase'; // ✅ Use Supabase
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { ProfileDisplay } from '../../src/components/ProfileDisplay';
 import { Dropdown, MultiSelect } from 'react-native-element-dropdown';
 import { Country, State, City } from 'country-state-city';
+
+import { supabase } from '../../src/lib/supabase';
+import { ProfileDisplay } from '../../src/components/ProfileDisplay';
+import { useAppTheme } from '../../src/theme/ThemeProvider';
+import { ExpectationsQuestionnaire } from '@/src/components/ExpectationsQuestionnaire';
+import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToast } from '@/src/ui/feedback/useToast';
+import { mapAuthError } from '@/src/features/auth/authMessageMapper';
+import StatusBanner from '@/src/components/ui/StatusBanner';
+
 import {
   GENDER_DATA,
   RESIDENT_STATUS_DATA,
@@ -34,9 +40,7 @@ import {
   INTEREST_DATA,
   MARITAL_STATUS_DATA,
   OCCUPATION_DATA,
-  DEBUG_CONFIG,
 } from '../../src/constants/appData';
-import { useAppTheme } from '../../src/theme/ThemeProvider';
 
 // --- CONFIG & CONSTANTS ---
 const TOTAL_STEPS = 8;
@@ -45,7 +49,6 @@ const SIB_MARITAL_DATA = [...MARITAL_STATUS_DATA, { label: 'Married', value: 'Ma
 const OCC_DATA = [...OCCUPATION_DATA, { label: 'Student', value: 'Student' }];
 
 const INITIAL_FORM_DATA = {
-  // Step 1 & 2
   fullName: '',
   gender: '',
   dob: '',
@@ -59,13 +62,11 @@ const INITIAL_FORM_DATA = {
   currentState: '',
   currentCity: '',
 
-  // Step 3 (Now an Array!)
   education_history: [{ level: '', field: '', university: '' }],
   profession: '',
   workplace: '',
   linkedinProfile: '',
 
-  // Step 4 & 5
   nativePlace: '',
   familyInitials: '',
   fatherName: '',
@@ -74,14 +75,13 @@ const INITIAL_FORM_DATA = {
   motherName: '',
   motherWork: '',
   motherPhone: '',
-  familyDetails: { siblings: [] }, // Nested object for lineage
+  familyDetails: { siblings: [] as Array<{ name: string; maritalStatus: string; occupation: string }> },
 
-  // Step 6 & 7
   kovil: '',
   pirivu: '',
   rasi: '',
   star: '',
-  interests: [], // Array for multi-select chips
+  interests: [] as string[],
   expectations: '',
   profilePhotoUrl: '',
 };
@@ -97,31 +97,8 @@ const STEP_META = [
   { title: 'Final Review', helper: 'Almost done — take a quick look before submitting.' },
 ];
 
-const FIELD_LABELS: Record<string, string> = {
-  fullName: 'Full Name',
-  phone: 'Phone Number',
-  dob: 'Date of Birth',
-  maritalStatus: 'Marital Status',
-  gender: 'Gender',
-  citizenship: 'Citizenship',
-  residentCountry: 'Resident Country',
-  currentState: 'State',
-  residentStatus: 'Resident Status',
-  profession: 'Profession',
-  workplace: 'Workplace',
-  kovil: 'Temple (Kovil)',
-  pirivu: 'Pirivu',
-  rasi: 'Rasi',
-  star: 'Star/Nakshatra',
-  nativePlace: 'Native Place',
-  familyInitials: 'Family Initials',
-  fatherName: "Father's Name",
-  motherName: "Mother's Name",
-  profilePhotoUrl: 'Profile Photo',
-};
-
 const REQUIRED_BY_STEP: Record<number, string[]> = {
-  1: ['fullName', 'phone', 'dob', 'maritalStatus', 'gender'],
+  1: ['fullName', 'phone', 'dob', 'maritalStatus', 'gender', 'height'],
   2: ['citizenship', 'residentCountry', 'currentState', 'residentStatus'],
   3: ['profession', 'workplace'],
   4: ['kovil', 'rasi', 'star', 'nativePlace', 'familyInitials'],
@@ -129,7 +106,12 @@ const REQUIRED_BY_STEP: Record<number, string[]> = {
   6: ['profilePhotoUrl'],
 };
 
-// --- STABLE UI HELPERS (MOVED OUTSIDE TO PREVENT FOCUS LOSS) ---
+function isBlank(value: unknown) {
+  if (Array.isArray(value)) return value.length === 0;
+  return String(value ?? '').trim() === '';
+}
+
+// --- STABLE UI HELPERS ---
 const FormInput = ({
   styles,
   theme,
@@ -200,15 +182,13 @@ const FormDropdown = ({
       placeholder={placeholder}
       placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
       selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
-      inputSearchStyle={[
-        {
-          borderRadius: styles._radiusInput,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          paddingHorizontal: 10,
-          color: theme.colors.text,
-        },
-      ]}
+      inputSearchStyle={{
+        borderRadius: theme.radius?.input ?? 12,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        paddingHorizontal: 10,
+        color: theme.colors.text,
+      }}
       activeColor={theme.colors.surface}
       itemTextStyle={{ color: theme.colors.text }}
       value={value}
@@ -219,92 +199,160 @@ const FormDropdown = ({
 
 export default function Onboarding() {
   const router = useRouter();
-  
   const { theme } = useAppTheme();
-  const radiusInput = theme?.radius?.input ?? 12;
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  
-  const webDateStyle = useMemo(() => {
-  return {
-    height: 46,
-    borderRadius: radiusInput,
-    border: `1px solid ${theme.colors.border}`,
-    padding: '0 12px',
-    fontSize: 14,
-    width: '100%',
-    backgroundColor: theme.colors.inputBg,
-    color: theme.colors.text,
-    outline: 'none',
-  } as any;
-}, [
-  radiusInput,
-  theme.colors.border,
-  theme.colors.inputBg,
-  theme.colors.text,
-]);
+  const radiusInput = theme?.radius?.input ?? 12;
+  const dialog = useDialog();
+  const toast = useToast();
+
+  const webDateStyle = useMemo(
+    () =>
+      ({
+        height: 46,
+        borderRadius: radiusInput,
+        border: `1px solid ${theme.colors.border}`,
+        padding: '0 12px',
+        fontSize: 14,
+        width: '100%',
+        backgroundColor: theme.colors.inputBg,
+        color: theme.colors.text,
+        outline: 'none',
+      }) as any,
+    [radiusInput, theme.colors.border, theme.colors.inputBg, theme.colors.text]
+  );
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [photoPreviewUri, setPhotoPreviewUri] = useState('');
   const [missing, setMissing] = useState<Record<string, boolean>>({});
   const [filterCodes, setFilterCodes] = useState({ country: '', state: '' });
-  const [isReady, setIsReady] = useState(false); // 🚀 Prevents flash of Step 1
+  const [isReady, setIsReady] = useState(false);
   const [formData, setFormData] = useState<any>(INITIAL_FORM_DATA);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [statusTone, setStatusTone] = useState<'info' | 'success' | 'error' | 'warning'>('info');
 
-  // 🚀 1. HYDRATE: Load saved data when the app starts
+  // Session guard
   useEffect(() => {
+    let alive = true;
+
+    const validateSession = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!alive) return;
+
+        if (!session?.user?.id) {
+          dialog.show({
+            title: 'Session expired',
+            message: 'Please sign in again to continue your onboarding.',
+            tone: 'error',
+            actions: [
+              {
+                label: 'Go to Sign In',
+                variant: 'primary',
+                onPress: () => router.replace('/(auth)/login'),
+              },
+            ],
+          });
+          return;
+        }
+
+        setFormData((prev: any) => {
+          if (prev?.email) return prev;
+          return { ...prev, email: session.user.email || '' };
+        });
+      } catch {
+        if (!alive) return;
+        router.replace('/(auth)/login');
+      }
+    };
+
+    void validateSession();
+
+    return () => {
+      alive = false;
+    };
+  }, [dialog, router]);
+
+  // Load draft
+  useEffect(() => {
+    let alive = true;
+
     const loadDraft = async () => {
       try {
         const savedDraft = await AsyncStorage.getItem(DRAFT_KEY);
+        if (!alive) return;
+
         if (savedDraft) {
-          const { step: savedStep, formData: savedData, filterCodes: savedFilters } = JSON.parse(savedDraft);
-          setFormData(savedData);
-          setStep(savedStep);
-          setFilterCodes(savedFilters);
-          // eslint-disable-next-line no-console
-          console.log('📦 Draft restored to Step:', savedStep);
+          const parsed = JSON.parse(savedDraft);
+          setFormData(parsed?.formData || INITIAL_FORM_DATA);
+          setStep(parsed?.step || 1);
+          setFilterCodes(parsed?.filterCodes || { country: '', state: '' });
+          setDraftRestored(true);
+          setStatusMessage('Your saved draft was restored on this device.');
+          setStatusTone('info');
+          console.log('📦 Draft restored to Step:', parsed?.step || 1);
         }
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error('Failed to load draft:', e);
       } finally {
-        setIsReady(true);
+        if (alive) setIsReady(true);
       }
     };
+
     void loadDraft();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
+  // Hydrate auth email after ready
   useEffect(() => {
-    let isMounted = true;
+    if (!isReady) return;
+
+    let alive = true;
+
     const hydrateAuthEmail = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      const authEmail = user?.email || '';
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
 
-      if (!authEmail) return;
+        if (!alive) return;
 
-      // Only set it if onboarding draft doesn't already have a value
-      setFormData((prev: any) => {
-        if (prev?.email) return prev;
-        return { ...prev, email: authEmail };
-      });
+        const authEmail = user?.email || '';
+        if (!authEmail) return;
+
+        setFormData((prev: any) => {
+          if (prev?.email) return prev;
+          return { ...prev, email: authEmail };
+        });
+      } catch {
+        // silent
+      }
     };
 
-    if (isReady) {
-      hydrateAuthEmail();
-    }
-    return () => { isMounted = false; };
+    void hydrateAuthEmail();
+
+    return () => {
+      alive = false;
+    };
   }, [isReady]);
 
-  // 🚀 2. PERSIST: Save data every time formData or step changes
+  // Persist draft
   useEffect(() => {
-    if (!isReady) return; // Don't save empty state over a draft!
+    if (!isReady) return;
 
     const saveDraft = async () => {
       try {
         const draft = JSON.stringify({ step, formData, filterCodes });
         await AsyncStorage.setItem(DRAFT_KEY, draft);
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error('Failed to save draft:', e);
       }
     };
@@ -312,7 +360,7 @@ export default function Onboarding() {
     void saveDraft();
   }, [step, formData, filterCodes, isReady]);
 
-  // ✅ Keep ISO codes in sync with form selections (fixes "city not populating")
+  // Sync ISO codes
   useEffect(() => {
     const countryName = String(formData?.residentCountry || '');
     const stateName = String(formData?.currentState || '');
@@ -326,129 +374,195 @@ export default function Onboarding() {
         : '';
 
     setFilterCodes((prev) => {
-      // Avoid unnecessary state updates
       if (prev.country === countryIso && prev.state === stateIso) return prev;
       return { country: countryIso, state: stateIso };
     });
   }, [formData?.residentCountry, formData?.currentState]);
 
-  // ✅ If country/state changes, clear city (prevents stale/invalid city)
+  // Clear city if state cleared
   useEffect(() => {
     setFormData((prev: any) => {
-      // If there's no state selected, city should be blank
       if (!prev?.currentState && prev?.currentCity) {
         return { ...prev, currentCity: '' };
       }
       return prev;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterCodes.country, filterCodes.state]);
 
-  const selectedKovilObj = KOVIL_DATA.find((k) => k.value === formData.kovil || k.label === formData.kovil);
-  const hasPirivus = !!(selectedKovilObj?.pirivus?.length);
+  const selectedKovilObj = KOVIL_DATA.find(
+    (k: any) => k.value === formData.kovil || k.label === formData.kovil
+  );
+  const hasPirivus = !!selectedKovilObj?.pirivus?.length;
 
-  // --- PHOTO UPLOAD (SUPABASE) ---
   const handlePickImage = async () => {
-    // eslint-disable-next-line no-console
     console.log('📸 Image picker triggered...');
+
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return Alert.alert('Permission Denied', 'We need access to your gallery.');
+    if (status !== 'granted') {
+      dialog.show({
+        title: 'Permission needed',
+        message: 'We need access to your gallery to attach a profile photo.',
+        tone: 'warning',
+      });
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'] as any,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.6,
+      quality: 0.7,
     });
-    if (!result.canceled) uploadPhoto(result.assets[0].uri);
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+    setPhotoPreviewUri(asset.uri);
+    await uploadPhoto(asset);
   };
 
   const resetOnboarding = async () => {
-    Alert.alert(
-      'Reset All Progress?',
-      'This will delete your current draft and take you back to Step 1. This is recommended if you are seeing errors.',
-      [
-        { text: 'Cancel', style: 'cancel' },
+    dialog.show({
+      title: 'Reset All Progress?',
+      message:
+        'This will delete your current draft and take you back to Step 1. This is recommended if you are seeing errors.',
+      tone: 'warning',
+      actions: [
+        { label: 'Cancel', variant: 'secondary' },
         {
-          text: 'Yes, Start Over',
-          style: 'destructive',
+          label: 'Yes, Start Over',
+          variant: 'danger',
           onPress: async () => {
             try {
-              // 1. Wipe the local storage save
               await AsyncStorage.removeItem(DRAFT_KEY);
-
-              // 2. Reset the state to the clean template
               setFormData(INITIAL_FORM_DATA);
+              setPhotoPreviewUri('');
               setStep(1);
               setMissing({});
               setFilterCodes({ country: '', state: '' });
-
-              // eslint-disable-next-line no-console
+              setDraftRestored(false);
+              setStatusMessage('Your draft has been cleared. You are back at Step 1.');
+              setStatusTone('success');
+              toast.show('Draft cleared successfully.', 'success');
               console.log('🧹 State and Storage have been reset.');
             } catch (e) {
-              // eslint-disable-next-line no-console
               console.error('Reset failed:', e);
+              dialog.show({
+                title: 'Reset failed',
+                message: 'We could not clear your draft right now. Please try again.',
+                tone: 'error',
+              });
             }
           },
         },
       ],
-    );
+    });
   };
 
-  // 1. Updated Upload Logic with "URL Verification"
-  const uploadPhoto = async (uri: string) => {
-    // eslint-disable-next-line no-console
-    console.log('🚀 Step 6: Initializing Web Upload...');
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return Alert.alert('Error', 'No active session found.');
+  const uploadPhoto = async (asset: ImagePicker.ImagePickerAsset) => {
+    console.log('🚀 Step 6: Initializing upload...');
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      dialog.show({
+        title: 'Session expired',
+        message: 'Please sign in again before uploading your photo.',
+        tone: 'error',
+        actions: [
+          {
+            label: 'Go to Sign In',
+            variant: 'primary',
+            onPress: () => router.replace('/(auth)/login'),
+          },
+        ],
+      });
+      return;
+    }
 
     setUploading(true);
+
     try {
-      const fileExt = uri.split('.').pop() || 'jpg';
-      const path = `${user.id}/${Date.now()}.${fileExt}`;
+      const mimeType = (asset as any).mimeType || 'image/jpeg';
+      const fileExt =
+        mimeType.split('/')[1] ||
+        asset.fileName?.split('.').pop()?.toLowerCase() ||
+        'jpg';
 
-      // ✅ FIX: Use XHR to get the blob. 'fetch' often hangs on local blob URIs in dev.
-      const blob = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.onload = () => resolve(xhr.response);
-        xhr.onerror = () => reject(new TypeError('Local file fetch failed'));
-        xhr.responseType = 'blob';
-        xhr.open('GET', uri, true);
-        xhr.send(null);
-      }) as Blob;
+      const safeExt = fileExt === 'jpeg' ? 'jpg' : fileExt;
+      const path = `${user.id}/profile-${Date.now()}.${safeExt}`;
 
-      // eslint-disable-next-line no-console
-      console.log('📦 Blob created successfully. Size:', blob.size);
+      let uploadBody: ArrayBuffer | File | Blob;
 
-      const { error } = await supabase.storage.from('profiles').upload(path, blob, {
-        contentType: `image/${fileExt}`,
+      if (Platform.OS === 'web' && (asset as any).file) {
+        uploadBody = (asset as any).file;
+      } else {
+        const response = await fetch(asset.uri);
+        uploadBody = await response.arrayBuffer();
+      }
+
+      const { error } = await supabase.storage.from('profiles').upload(path, uploadBody, {
+        contentType: mimeType,
         upsert: true,
       });
 
       if (error) throw error;
 
-      const { data: { publicUrl } } = supabase.storage.from('profiles').getPublicUrl(path);
-      const finalUrl = `${publicUrl}?t=${Date.now()}`; // Cache buster
+      const { data: publicData } = supabase.storage.from('profiles').getPublicUrl(path);
+      const finalUrl = `${publicData.publicUrl}?t=${Date.now()}`;
 
-      // eslint-disable-next-line no-console
-      console.log('✅ FINAL URL:', finalUrl);
-      setFormData((p: any) => ({ ...p, profilePhotoUrl: finalUrl }));
-      setMissing((p) => ({ ...p, profilePhotoUrl: false }));
+      setFormData((prev: any) => ({
+        ...prev,
+        profilePhotoUrl: finalUrl,
+      }));
+
+      setMissing((prev) => ({
+        ...prev,
+        profilePhotoUrl: false,
+      }));
+
+      setStatusMessage('Photo attached successfully.');
+      setStatusTone('success');
+      toast.show('Photo attached successfully.', 'success');
     } catch (e: any) {
-      // eslint-disable-next-line no-console
       console.error('❌ UPLOAD FAILED:', e);
-      Alert.alert('Upload Failed', e.message);
+      const ui = mapAuthError(e, 'submit');
+      dialog.show({
+        title: 'Upload Failed',
+        message: e?.message || ui.message || 'Unable to upload image.',
+        tone: 'error',
+      });
     } finally {
       setUploading(false);
     }
   };
 
-  // --- SUBMISSION ---
   const handleSubmit = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return Alert.alert('Error', 'Session expired.');
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      dialog.show({
+        title: 'Session expired',
+        message: 'Please sign in again before submitting your profile.',
+        tone: 'error',
+        actions: [
+          {
+            label: 'Go to Sign In',
+            variant: 'primary',
+            onPress: () => router.replace('/(auth)/login'),
+          },
+        ],
+      });
+      return;
+    }
 
     setLoading(true);
+
     try {
-      // 🚀 Explicitly mapping Onboarding state to Database columns
       const dbPayload = {
         id: user.id,
         full_name: formData.fullName,
@@ -480,34 +594,33 @@ export default function Onboarding() {
         star: formData.star,
         expectations: formData.expectations,
         profile_photo_url: formData.profilePhotoUrl,
-
-        // JSONB and Arrays
         education_history: formData.education_history || [],
         family_details: formData.familyDetails || { siblings: [] },
         interests: Array.isArray(formData.interests) ? formData.interests : [],
-
-        // Flags
-        // ✅ Privacy defaults
         hide_phone: false,
         hide_email: false,
         is_submitted: true,
         is_approved: false,
-        updated_at: new Date(),
+        updated_at: new Date().toISOString(),
       };
 
-      // eslint-disable-next-line no-console
       console.log('📤 Sending payload to Supabase:', dbPayload);
 
       const { error } = await supabase.from('profiles').upsert(dbPayload, { onConflict: 'id' });
       if (error) throw error;
 
-      // ✅ Clear the draft and move to the waiting room
       await AsyncStorage.removeItem(DRAFT_KEY);
+      setPhotoPreviewUri('');
+      toast.show('Profile submitted successfully.', 'success');
       router.replace('/(auth)/PendingApproval');
     } catch (e: any) {
-      // eslint-disable-next-line no-console
       console.error('❌ Submission Error:', e);
-      Alert.alert('Submission Failed', e.message || 'Check your network or database schema.');
+      const ui = mapAuthError(e, 'submit');
+      dialog.show({
+        title: 'Submission Failed',
+        message: e?.message || ui.message || 'Check your network or database schema.',
+        tone: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -516,9 +629,21 @@ export default function Onboarding() {
   const nextStep = () => {
     const required = REQUIRED_BY_STEP[step] || [];
     const missMap: Record<string, boolean> = {};
-    required.forEach((k) => { if (!formData[k]) missMap[k] = true; });
-    if (Object.keys(missMap).length > 0) return setMissing(missMap);
-    setStep((s) => s + 1);
+
+    required.forEach((k) => {
+      if (isBlank(formData[k])) missMap[k] = true;
+    });
+
+    if (Object.keys(missMap).length > 0) {
+      setMissing((prev) => ({ ...prev, ...missMap }));
+      setStatusMessage('Please complete the highlighted fields before continuing.');
+      setStatusTone('warning');
+      return;
+    }
+
+    setMissing({});
+    setStatusMessage('');
+    setStep((s) => Math.min(TOTAL_STEPS, s + 1));
   };
 
   const progressPct = Math.round((step / TOTAL_STEPS) * 100);
@@ -537,7 +662,6 @@ export default function Onboarding() {
             Step {step} of {TOTAL_STEPS} ({progressPct}%)
           </Text>
 
-          {/* 🚀 THIS IS THE BUTTON TO CALL THE RESET */}
           <TouchableOpacity onPress={resetOnboarding} style={styles.resetBtn} activeOpacity={0.85}>
             <Ionicons name="refresh-circle" size={16} color={theme.colors.danger} />
             <Text style={styles.resetBtnText}>RESET</Text>
@@ -555,10 +679,21 @@ export default function Onboarding() {
       </View>
 
       <ScrollView style={styles.contentScroller} contentContainerStyle={styles.scrollArea}>
+        {!!statusMessage && (
+          <StatusBanner theme={theme} tone={statusTone} text={statusMessage} />
+        )}
+
+        {draftRestored && !statusMessage && (
+          <StatusBanner
+            theme={theme}
+            tone="info"
+            text="Your saved draft was restored on this device."
+          />
+        )}
+
         <View style={styles.sectionCard}>
           {step === 1 && (
             <View>
-              {/* Row 1: Name and Phone */}
               <View style={styles.rowGrid}>
                 <FormInput
                   styles={styles}
@@ -567,7 +702,9 @@ export default function Onboarding() {
                   k="fullName"
                   value={formData.fullName}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, fullName: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, fullName: v }))
+                  }
                   required
                   style={{ flex: 2.5 }}
                 />
@@ -578,26 +715,42 @@ export default function Onboarding() {
                   k="phone"
                   value={formData.phone}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, phone: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, phone: v }))
+                  }
                   required
                   keyboardType="phone-pad"
                   style={{ flex: 1.5, marginLeft: 12 }}
                 />
               </View>
 
-              {/* Row 2: DOB, Gender, and Height */}
               <View style={styles.rowGrid}>
                 <View style={{ flex: 1.2 }}>
                   <Text style={styles.label}>
                     Date of Birth <Text style={styles.reqStar}>*</Text>
                   </Text>
-                  {/* eslint-disable-next-line react/no-unknown-property */}
-                  <input
-                    type="date"
-                    value={formData.dob}
-                    style={webDateStyle}
-                    onChange={(e: any) => setFormData({ ...formData, dob: e.target.value })}
-                  />
+
+                  {Platform.OS === 'web' ? (
+                    // eslint-disable-next-line react/no-unknown-property
+                    <input
+                      type="date"
+                      value={formData.dob}
+                      style={webDateStyle}
+                      onChange={(e: any) =>
+                        setFormData((prev: any) => ({ ...prev, dob: e.target.value }))
+                      }
+                    />
+                  ) : (
+                    <TextInput
+                      style={[styles.standardInput, missing?.dob && styles.inputError]}
+                      value={formData.dob}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor={theme.colors.mutedText}
+                      onChangeText={(v) =>
+                        setFormData((prev: any) => ({ ...prev, dob: v }))
+                      }
+                    />
+                  )}
                 </View>
 
                 <FormDropdown
@@ -608,7 +761,9 @@ export default function Onboarding() {
                   value={formData.gender}
                   data={GENDER_DATA}
                   missing={missing}
-                  onSelect={(item: any) => setFormData({ ...formData, gender: item.value })}
+                  onSelect={(item: any) =>
+                    setFormData((prev: any) => ({ ...prev, gender: item.value }))
+                  }
                   required
                   style={{ flex: 0.8, marginLeft: 12 }}
                 />
@@ -621,13 +776,14 @@ export default function Onboarding() {
                   value={formData.height}
                   data={HEIGHT_DATA}
                   missing={missing}
-                  onSelect={(item: any) => setFormData({ ...formData, height: item.value })}
+                  onSelect={(item: any) =>
+                    setFormData((prev: any) => ({ ...prev, height: item.value }))
+                  }
                   required
                   style={{ flex: 1, marginLeft: 12 }}
                 />
               </View>
 
-              {/* Row 3: Marital Status */}
               <FormDropdown
                 styles={styles}
                 theme={theme}
@@ -636,7 +792,9 @@ export default function Onboarding() {
                 value={formData.maritalStatus}
                 data={MARITAL_STATUS_DATA}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, maritalStatus: item.value })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, maritalStatus: item.value }))
+                }
                 required
                 style={{ marginTop: 12 }}
               />
@@ -653,9 +811,10 @@ export default function Onboarding() {
                 value={formData.citizenship}
                 data={Country.getAllCountries().map((c) => ({ label: c.name, value: c.name }))}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, citizenship: item.value })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, citizenship: item.value }))
+                }
                 required
-                style={{ flex: 1 }}
               />
 
               <FormDropdown
@@ -667,9 +826,41 @@ export default function Onboarding() {
                 data={Country.getAllCountries().map((c) => ({ label: c.name, value: c.name }))}
                 missing={missing}
                 onSelect={(i: any) => {
-                  const iso = Country.getAllCountries().find((c) => c.name === i.value)?.isoCode || '';
+                  const iso =
+                    Country.getAllCountries().find((c) => c.name === i.value)?.isoCode || '';
                   setFilterCodes({ country: iso, state: '' });
-                  setFormData({ ...formData, residentCountry: i.value }); // ✅ stores "United States"
+                  setFormData((prev: any) => ({
+                    ...prev,
+                    residentCountry: i.value,
+                    currentState: '',
+                    currentCity: '',
+                  }));
+                }}
+                required
+              />
+
+              <FormDropdown
+                styles={styles}
+                theme={theme}
+                label="Resident State/Province"
+                k="currentState"
+                value={formData.currentState}
+                data={State.getStatesOfCountry(filterCodes.country).map((s) => ({
+                  label: s.name,
+                  value: s.name,
+                }))}
+                missing={missing}
+                placeholder={filterCodes.country ? 'Select State' : 'Select Country First'}
+                onSelect={(i: any) => {
+                  const stateIso =
+                    State.getStatesOfCountry(filterCodes.country).find((s) => s.name === i.value)
+                      ?.isoCode || '';
+                  setFilterCodes((prev) => ({ ...prev, state: stateIso }));
+                  setFormData((prev: any) => ({
+                    ...prev,
+                    currentState: i.value,
+                    currentCity: '',
+                  }));
                 }}
                 required
               />
@@ -682,43 +873,43 @@ export default function Onboarding() {
                 value={formData.currentCity}
                 missing={missing}
                 placeholder="Type your city"
-                onChangeText={(v: any) => setFormData({ ...formData, currentCity: v })}
+                onChangeText={(v: any) =>
+                  setFormData((prev: any) => ({ ...prev, currentCity: v }))
+                }
               />
 
-              <FormDropdown
-                styles={styles}
-                theme={theme}
-                label="Resident City"
-                k="currentCity"
-                value={formData.currentCity}
-                data={City.getCitiesOfState(filterCodes.country, filterCodes.state).map((c) => ({ label: c.name, value: c.name }))}
-                missing={missing}
-                onSelect={(i: any) => setFormData({ ...formData, currentCity: i.value })}
-              />
-
-              {/* Optional: if city suggestions exist, show a lightweight picker below */}
-              {filterCodes.country && filterCodes.state ? (
+              {filterCodes.country && filterCodes.state && (
                 (() => {
                   const cities = City.getCitiesOfState(filterCodes.country, filterCodes.state) || [];
-                  const top = cities.slice(0, 12); // keep it light
-
-                  if (top.length === 0) return null;
+                  const topCities = cities.slice(0, 10);
+                  if (topCities.length === 0) return null;
 
                   return (
-                    <View style={{ marginTop: -6, marginBottom: 10 }}>
-                      <Text style={styles.label}>Suggestions</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                        {top.map((c) => (
+                    <View style={{ marginTop: -10, marginBottom: 15, paddingHorizontal: 4 }}>
+                      <Text style={[styles.label, { fontSize: 10, marginBottom: 8 }]}>
+                        Suggestions
+                      </Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {topCities.map((c) => (
                           <TouchableOpacity
                             key={c.name}
-                            onPress={() => setFormData({ ...formData, currentCity: c.name })}
+                            onPress={() =>
+                              setFormData((prev: any) => ({ ...prev, currentCity: c.name }))
+                            }
                             style={[
                               styles.inlineAddBtn,
-                              { paddingVertical: 6, paddingHorizontal: 10 },
+                              formData.currentCity === c.name && {
+                                borderColor: theme.colors.primary,
+                              },
                             ]}
-                            activeOpacity={0.85}
                           >
-                            <Text style={{ fontWeight: '900', color: theme.colors.text, fontSize: 12 }}>
+                            <Text
+                              style={{
+                                fontSize: 11,
+                                fontWeight: '700',
+                                color: theme.colors.text,
+                              }}
+                            >
                               {c.name}
                             </Text>
                           </TouchableOpacity>
@@ -727,8 +918,8 @@ export default function Onboarding() {
                     </View>
                   );
                 })()
-              ) : null}
-              
+              )}
+
               <FormDropdown
                 styles={styles}
                 theme={theme}
@@ -737,9 +928,10 @@ export default function Onboarding() {
                 value={formData.residentStatus}
                 data={RESIDENT_STATUS_DATA}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, residentStatus: item.value })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, residentStatus: item.value }))
+                }
                 required
-                style={{ flex: 1, marginLeft: 5 }}
               />
             </View>
           )}
@@ -752,7 +944,7 @@ export default function Onboarding() {
                   onPress={() => {
                     const currentEdu = formData.education_history || [];
                     const updated = [...currentEdu, { level: '', field: '', university: '' }];
-                    setFormData({ ...formData, education_history: updated });
+                    setFormData((prev: any) => ({ ...prev, education_history: updated }));
                   }}
                   style={styles.inlineAddBtn}
                   activeOpacity={0.85}
@@ -774,10 +966,10 @@ export default function Onboarding() {
                       placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
                       selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
                       value={edu.level}
-                      onChange={(item) => {
+                      onChange={(item: any) => {
                         const updated = [...formData.education_history];
                         updated[i].level = item.value;
-                        setFormData({ ...formData, education_history: updated });
+                        setFormData((prev: any) => ({ ...prev, education_history: updated }));
                       }}
                     />
 
@@ -790,10 +982,10 @@ export default function Onboarding() {
                       placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
                       selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
                       value={edu.field}
-                      onChange={(item) => {
+                      onChange={(item: any) => {
                         const updated = [...formData.education_history];
                         updated[i].field = item.value;
-                        setFormData({ ...formData, education_history: updated });
+                        setFormData((prev: any) => ({ ...prev, education_history: updated }));
                       }}
                     />
 
@@ -805,15 +997,17 @@ export default function Onboarding() {
                       onChangeText={(v) => {
                         const updated = [...formData.education_history];
                         updated[i].university = v;
-                        setFormData({ ...formData, education_history: updated });
+                        setFormData((prev: any) => ({ ...prev, education_history: updated }));
                       }}
                     />
 
                     {formData.education_history.length > 1 && (
                       <TouchableOpacity
                         onPress={() => {
-                          const updated = formData.education_history.filter((_: any, idx: number) => idx !== i);
-                          setFormData({ ...formData, education_history: updated });
+                          const updated = formData.education_history.filter(
+                            (_: any, idx: number) => idx !== i
+                          );
+                          setFormData((prev: any) => ({ ...prev, education_history: updated }));
                         }}
                         style={{ marginLeft: 8 }}
                         activeOpacity={0.85}
@@ -835,7 +1029,9 @@ export default function Onboarding() {
                 value={formData.profession}
                 data={PROFESSION_DATA}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, profession: item.value })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, profession: item.value }))
+                }
                 required
               />
 
@@ -846,7 +1042,9 @@ export default function Onboarding() {
                 k="workplace"
                 value={formData.workplace}
                 missing={missing}
-                onChangeText={(v: any) => setFormData({ ...formData, workplace: v })}
+                onChangeText={(v: any) =>
+                  setFormData((prev: any) => ({ ...prev, workplace: v }))
+                }
                 required
               />
 
@@ -857,7 +1055,9 @@ export default function Onboarding() {
                 k="linkedinProfile"
                 value={formData.linkedinProfile}
                 missing={missing}
-                onChangeText={(v: any) => setFormData({ ...formData, linkedinProfile: v })}
+                onChangeText={(v: any) =>
+                  setFormData((prev: any) => ({ ...prev, linkedinProfile: v }))
+                }
               />
             </View>
           )}
@@ -872,7 +1072,9 @@ export default function Onboarding() {
                 value={formData.kovil}
                 data={KOVIL_DATA}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, kovil: item.value, pirivu: '' })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, kovil: item.value, pirivu: '' }))
+                }
                 required
               />
 
@@ -885,7 +1087,9 @@ export default function Onboarding() {
                   value={formData.pirivu}
                   data={selectedKovilObj?.pirivus?.map((p: any) => ({ label: p, value: p })) ?? []}
                   missing={missing}
-                  onSelect={(item: any) => setFormData({ ...formData, pirivu: item.value })}
+                  onSelect={(item: any) =>
+                    setFormData((prev: any) => ({ ...prev, pirivu: item.value }))
+                  }
                   required
                 />
               )}
@@ -898,7 +1102,9 @@ export default function Onboarding() {
                 value={formData.rasi}
                 data={RASI_DATA}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, rasi: item.value })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, rasi: item.value }))
+                }
                 required
               />
 
@@ -910,7 +1116,9 @@ export default function Onboarding() {
                 value={formData.star}
                 data={NAKSHATRA_DATA}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, star: item.value })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, star: item.value }))
+                }
                 required
               />
 
@@ -922,7 +1130,9 @@ export default function Onboarding() {
                 value={formData.nativePlace}
                 data={NATIVE_PLACES_DATA}
                 missing={missing}
-                onSelect={(item: any) => setFormData({ ...formData, nativePlace: item.value })}
+                onSelect={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, nativePlace: item.value }))
+                }
                 required
               />
 
@@ -933,9 +1143,10 @@ export default function Onboarding() {
                 k="familyInitials"
                 value={formData.familyInitials}
                 missing={missing}
-                onChangeText={(v: any) => setFormData({ ...formData, familyInitials: v })}
+                onChangeText={(v: any) =>
+                  setFormData((prev: any) => ({ ...prev, familyInitials: v }))
+                }
                 required
-                style={{ flex: 1, marginLeft: 5 }}
               />
             </View>
           )}
@@ -950,7 +1161,9 @@ export default function Onboarding() {
                   k="fatherName"
                   value={formData.fatherName}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, fatherName: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, fatherName: v }))
+                  }
                   required
                   style={{ flex: 1 }}
                 />
@@ -961,7 +1174,9 @@ export default function Onboarding() {
                   k="fatherWork"
                   value={formData.fatherWork}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, fatherWork: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, fatherWork: v }))
+                  }
                   style={{ flex: 1, marginLeft: 12 }}
                 />
                 <FormInput
@@ -971,7 +1186,9 @@ export default function Onboarding() {
                   k="fatherPhone"
                   value={formData.fatherPhone}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, fatherPhone: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, fatherPhone: v }))
+                  }
                   keyboardType="phone-pad"
                   style={{ flex: 1, marginLeft: 12 }}
                 />
@@ -985,7 +1202,9 @@ export default function Onboarding() {
                   k="motherName"
                   value={formData.motherName}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, motherName: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, motherName: v }))
+                  }
                   required
                   style={{ flex: 1 }}
                 />
@@ -996,7 +1215,9 @@ export default function Onboarding() {
                   k="motherWork"
                   value={formData.motherWork}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, motherWork: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, motherWork: v }))
+                  }
                   style={{ flex: 1, marginLeft: 12 }}
                 />
                 <FormInput
@@ -1006,7 +1227,9 @@ export default function Onboarding() {
                   k="motherPhone"
                   value={formData.motherPhone}
                   missing={missing}
-                  onChangeText={(v: any) => setFormData({ ...formData, motherPhone: v })}
+                  onChangeText={(v: any) =>
+                    setFormData((prev: any) => ({ ...prev, motherPhone: v }))
+                  }
                   keyboardType="phone-pad"
                   style={{ flex: 1, marginLeft: 12 }}
                 />
@@ -1018,8 +1241,14 @@ export default function Onboarding() {
                 <Text style={styles.label}>Siblings</Text>
                 <TouchableOpacity
                   onPress={() => {
-                    const updated = [...formData.familyDetails.siblings, { name: '', maritalStatus: 'Never Married', occupation: '' }];
-                    setFormData({ ...formData, familyDetails: { siblings: updated } });
+                    const updated = [
+                      ...formData.familyDetails.siblings,
+                      { name: '', maritalStatus: 'Never Married', occupation: '' },
+                    ];
+                    setFormData((prev: any) => ({
+                      ...prev,
+                      familyDetails: { siblings: updated },
+                    }));
                   }}
                   style={styles.inlineAddBtn}
                   activeOpacity={0.85}
@@ -1040,7 +1269,10 @@ export default function Onboarding() {
                       onChangeText={(v) => {
                         const updated = [...formData.familyDetails.siblings];
                         updated[i].name = v;
-                        setFormData({ ...formData, familyDetails: { siblings: updated } });
+                        setFormData((prev: any) => ({
+                          ...prev,
+                          familyDetails: { siblings: updated },
+                        }));
                       }}
                     />
 
@@ -1053,10 +1285,13 @@ export default function Onboarding() {
                       placeholder="Status"
                       placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
                       selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
-                      onChange={(item) => {
+                      onChange={(item: any) => {
                         const updated = [...formData.familyDetails.siblings];
                         updated[i].maritalStatus = item.value;
-                        setFormData({ ...formData, familyDetails: { siblings: updated } });
+                        setFormData((prev: any) => ({
+                          ...prev,
+                          familyDetails: { siblings: updated },
+                        }));
                       }}
                     />
 
@@ -1069,10 +1304,13 @@ export default function Onboarding() {
                       placeholder="Job"
                       placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
                       selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
-                      onChange={(item) => {
+                      onChange={(item: any) => {
                         const updated = [...formData.familyDetails.siblings];
                         updated[i].occupation = item.value;
-                        setFormData({ ...formData, familyDetails: { siblings: updated } });
+                        setFormData((prev: any) => ({
+                          ...prev,
+                          familyDetails: { siblings: updated },
+                        }));
                       }}
                     />
                   </View>
@@ -1089,13 +1327,11 @@ export default function Onboarding() {
                 disabled={uploading}
                 activeOpacity={0.85}
               >
-                {formData.profilePhotoUrl ? (
+                {photoPreviewUri || formData.profilePhotoUrl ? (
                   <Image
-                    key={formData.profilePhotoUrl}
-                    source={{ uri: formData.profilePhotoUrl }}
+                    key={photoPreviewUri || formData.profilePhotoUrl}
+                    source={{ uri: photoPreviewUri || formData.profilePhotoUrl }}
                     style={styles.uploadedImg}
-                    onLoad={() => console.log('🖼️ Image loaded successfully on screen')}
-                    onError={(e) => console.error('🖼️ Image failed to render:', e.nativeEvent.error)}
                   />
                 ) : (
                   <View style={{ alignItems: 'center' }}>
@@ -1109,7 +1345,11 @@ export default function Onboarding() {
               </TouchableOpacity>
 
               <Text style={styles.miniLabel}>
-                {uploading ? 'Uploading...' : formData.profilePhotoUrl ? 'Attached! ✅' : 'Upload your photo'}
+                {uploading
+                  ? 'Uploading...'
+                  : formData.profilePhotoUrl
+                    ? 'Attached! ✅'
+                    : 'Upload your photo'}
               </Text>
             </View>
           )}
@@ -1126,22 +1366,17 @@ export default function Onboarding() {
                 placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
                 selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
                 value={formData.interests}
-                onChange={(item) => setFormData({ ...formData, interests: item })}
+                onChange={(item: any) =>
+                  setFormData((prev: any) => ({ ...prev, interests: item }))
+                }
                 selectedStyle={styles.selectedChip}
                 activeColor={theme.colors.surface}
               />
 
-              <FormInput
-                styles={styles}
-                theme={theme}
-                label="Expectations"
-                k="expectations"
+              <ExpectationsQuestionnaire
                 value={formData.expectations}
-                missing={missing}
-                placeholder="Tell us what you are looking for..."
-                onChangeText={(v: any) => setFormData({ ...formData, expectations: v })}
-                multiline
-                style={{ marginTop: 22 }}
+                onChange={(v) => setFormData((prev: any) => ({ ...prev, expectations: v }))}
+                theme={theme}
               />
             </View>
           )}
@@ -1150,14 +1385,20 @@ export default function Onboarding() {
             <View style={styles.reviewBox}>
               <Text style={styles.reviewTitle}>Final Review</Text>
               <ProfileDisplay profile={formData} showPhoto />
-              <Text style={styles.reviewFooter}>Please ensure all details are correct before submitting.</Text>
+              <Text style={styles.reviewFooter}>
+                Please ensure all details are correct before submitting.
+              </Text>
             </View>
           )}
         </View>
 
         <View style={styles.footer}>
           {step > 1 && (
-            <TouchableOpacity onPress={() => setStep(step - 1)} style={styles.backBtn} activeOpacity={0.85}>
+            <TouchableOpacity
+              onPress={() => setStep((s) => Math.max(1, s - 1))}
+              style={styles.backBtn}
+              activeOpacity={0.85}
+            >
               <Text style={styles.backText}>Previous</Text>
             </TouchableOpacity>
           )}
@@ -1181,14 +1422,13 @@ export default function Onboarding() {
 }
 
 function makeStyles(theme: any) {
-  const s = theme.spacing;
   const r = theme.radius;
 
   return StyleSheet.create({
-    // Expose radius for webDateStyle composition
-    
-
-    webSafeContainer: { flex: 1, backgroundColor: theme.colors.bg },
+    webSafeContainer: {
+      flex: 1,
+      backgroundColor: theme.colors.bg,
+    },
 
     progressHeader: {
       padding: 20,
@@ -1203,9 +1443,18 @@ function makeStyles(theme: any) {
       alignItems: 'center',
     },
 
-    stepText: { fontSize: 13, fontWeight: '900', color: theme.colors.text },
+    stepText: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: theme.colors.text,
+    },
 
-    headerTitle: { fontSize: 18, fontWeight: '900', color: theme.colors.text, marginTop: 2 },
+    headerTitle: {
+      fontSize: 18,
+      fontWeight: '900',
+      color: theme.colors.text,
+      marginTop: 2,
+    },
 
     helperText: {
       marginTop: 6,
@@ -1223,11 +1472,19 @@ function makeStyles(theme: any) {
       marginVertical: 10,
     },
 
-    progressBarFill: { height: '100%', backgroundColor: theme.colors.primary },
+    progressBarFill: {
+      height: '100%',
+      backgroundColor: theme.colors.primary,
+    },
 
-    contentScroller: { flex: 1 },
+    contentScroller: {
+      flex: 1,
+    },
 
-    scrollArea: { padding: 20, paddingBottom: 40 },
+    scrollArea: {
+      padding: 20,
+      paddingBottom: 40,
+    },
 
     sectionCard: {
       backgroundColor: theme.colors.surface2,
@@ -1246,11 +1503,18 @@ function makeStyles(theme: any) {
       letterSpacing: 0.7,
     },
 
-    reqStar: { color: theme.colors.danger },
+    reqStar: {
+      color: theme.colors.danger,
+    },
 
-    optTag: { color: theme.colors.mutedText, fontWeight: '900' },
+    optTag: {
+      color: theme.colors.mutedText,
+      fontWeight: '900',
+    },
 
-    inputGroup: { marginBottom: 16 },
+    inputGroup: {
+      marginBottom: 16,
+    },
 
     standardInput: {
       height: 46,
@@ -1273,11 +1537,21 @@ function makeStyles(theme: any) {
       backgroundColor: theme.colors.inputBg,
     },
 
-    inputError: { borderColor: theme.colors.danger, borderWidth: 1.5 },
+    inputError: {
+      borderColor: theme.colors.danger,
+      borderWidth: 1.5,
+    },
 
-    rowGrid: { flexDirection: 'row', gap: 12 },
+    rowGrid: {
+      flexDirection: 'row',
+      gap: 12,
+    },
 
-    footer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
+    footer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginTop: 10,
+    },
 
     nextBtn: {
       flex: 1,
@@ -1289,7 +1563,10 @@ function makeStyles(theme: any) {
       marginLeft: 10,
     },
 
-    nextText: { color: theme.colors.primaryText, fontWeight: '900' },
+    nextText: {
+      color: theme.colors.primaryText,
+      fontWeight: '900',
+    },
 
     backBtn: {
       height: 50,
@@ -1302,9 +1579,16 @@ function makeStyles(theme: any) {
       backgroundColor: theme.colors.surface,
     },
 
-    backText: { color: theme.colors.text, fontWeight: '800' },
+    backText: {
+      color: theme.colors.text,
+      fontWeight: '800',
+    },
 
-    divider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 20 },
+    divider: {
+      height: 1,
+      backgroundColor: theme.colors.border,
+      marginVertical: 20,
+    },
 
     siblingHeader: {
       flexDirection: 'row',
@@ -1325,7 +1609,11 @@ function makeStyles(theme: any) {
       borderColor: theme.colors.border,
     },
 
-    addBtnText: { fontSize: 12, fontWeight: '900', color: theme.colors.text },
+    addBtnText: {
+      fontSize: 12,
+      fontWeight: '900',
+      color: theme.colors.text,
+    },
 
     compactFormBox: {
       backgroundColor: theme.colors.surface,
@@ -1336,7 +1624,10 @@ function makeStyles(theme: any) {
       borderColor: theme.colors.border,
     },
 
-    eduRowHorizontal: { flexDirection: 'row', alignItems: 'center' },
+    eduRowHorizontal: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
 
     photoCircle: {
       width: 160,
@@ -1350,9 +1641,17 @@ function makeStyles(theme: any) {
       borderColor: theme.colors.border,
     },
 
-    uploadedImg: { width: '100%', height: '100%' },
+    uploadedImg: {
+      width: '100%',
+      height: '100%',
+    },
 
-    miniLabel: { fontSize: 12, color: theme.colors.mutedText, marginTop: 10, fontWeight: '700' },
+    miniLabel: {
+      fontSize: 12,
+      color: theme.colors.mutedText,
+      marginTop: 10,
+      fontWeight: '700',
+    },
 
     reviewBox: {
       borderWidth: 1,

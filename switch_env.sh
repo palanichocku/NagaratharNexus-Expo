@@ -5,6 +5,7 @@ set -euo pipefail
 ENV_FILE=".env.local"
 DEV_FILE=".env.development"
 PROD_FILE=".env.production"
+LOCAL_FILE=".env.localdev"
 
 # ─────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -55,18 +56,22 @@ show_status() {
 # ─────────────────────────────────────────────
 case "${1:-}" in
   dev)
-    warn "Switching to DEV..."
+    warn "Switching to DEVELOPMENT..."
     switch_to "$DEV_FILE" "DEV (.env.development → .env.local)"
     ;;
   prod)
-    warn "Switching to PROD..."
+    warn "Switching to PRODUCTION..."
     switch_to "$PROD_FILE" "PROD (.env.production → .env.local)"
+    ;;
+  local)
+    warn "Switching to LOCAL..."
+    switch_to "$LOCAL_FILE" "LOCAL (.env.localdev → .env.local)"
     ;;
   status)
     show_status
     ;;
   *)
-    echo "Usage: $0 [dev|prod|status]"
+    echo "Usage: $0 [dev|prod|local|status]"
     exit 1
     ;;
 esac

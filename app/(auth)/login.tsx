@@ -1,5 +1,5 @@
 // src/app/(auth)/login.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
   Pressable,
   Modal,
@@ -15,14 +14,19 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { supabase } from '../../src/lib/supabase';
-import { REDIRECT_URL } from '../../src/lib/supabase';
+import { supabase, REDIRECT_URL } from '../../src/lib/supabase';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
+import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToast } from '@/src/ui/feedback/useToast';
+import { mapAuthError } from '@/src/features/auth/authMessageMapper';
 
 export default function LoginScreen() {
   const router = useRouter();
   const { theme } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  const dialog = useDialog();
+  const toast = useToast();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,81 +35,200 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [signupCooldown, setSignupCooldown] = useState(0);
+
+  useEffect(() => {
+    if (signupCooldown <= 0) return;
+
+    const id = setInterval(() => {
+      setSignupCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [signupCooldown]);
 
   const handleEmailAuth = async () => {
-    if (!email || !password) return;
+    if (loading || (isSignUp && signupCooldown > 0)) return;
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = fullName.trim();
+
+    if (!cleanEmail || !password) {
+      dialog.show({
+        title: 'Missing Details',
+        message: 'Please enter your email and password.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (isSignUp && !cleanName) {
+      dialog.show({
+        title: 'Full Name Required',
+        message: 'Please enter your full name to create your account.',
+        tone: 'warning',
+      });
+      return;
+    }
+
     setLoading(true);
 
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: cleanEmail,
           password,
           options: {
-            data: { full_name: fullName },
+            data: { full_name: cleanName },
             emailRedirectTo: `${REDIRECT_URL}/Onboarding`,
           },
         });
 
         if (error) throw error;
 
-        if (data?.user) {
-          router.push({
-            pathname: '/(auth)/VerifyEmail',
-            params: { email },
-          });
+        dialog.show({
+          title: 'Check your email',
+          message: `We sent a verification link to ${cleanEmail}. Please verify your email before continuing.`,
+          tone: 'success',
+          actions: [
+            {
+              label: 'Continue',
+              variant: 'primary',
+              onPress: () =>
+                router.push({
+                  pathname: '/(auth)/VerifyEmail',
+                  params: { email: cleanEmail },
+                }),
+            },
+          ],
+        });
+
+        if (!data?.user) {
+          toast.show('Please check your email for the verification link.', 'info');
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email: cleanEmail,
           password,
         });
 
         if (error) {
-          if (error.message.toLowerCase().includes('invalid login credentials')) {
+          const raw = String(error?.message || '').toLowerCase();
+
+          if (raw.includes('invalid login credentials')) {
             setShowInviteModal(true);
             return;
           }
+
           throw error;
         }
-        // Layout handles navigation after auth
+
+        toast.show('Welcome back.', 'success');
+        // app/_layout handles navigation
       }
     } catch (error: any) {
-      Alert.alert('Authentication Error', error.message);
+      const ui = mapAuthError(error, isSignUp ? 'signUp' : 'signIn');
+
+      if (isSignUp && ui.cooldownSeconds) {
+        setSignupCooldown(ui.cooldownSeconds);
+      }
+
+      dialog.show({
+        title: ui.title,
+        message: ui.message,
+        tone: ui.tone,
+        actions: [
+          {
+            label: 'OK',
+            variant: 'primary',
+          },
+        ],
+      });
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
+    if (loading) return;
+
     const redirectTo =
-      Platform.OS === 'web'
+      Platform.OS === 'web' && typeof window !== 'undefined'
         ? window.location.origin
-        : REDIRECT_URL; // ✅ avoids window crash on native
+        : REDIRECT_URL;
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo },
-    });
+    setLoading(true);
 
-    if (error) Alert.alert('Google Login Error', error.message);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo },
+      });
+
+      if (error) throw error;
+    } catch (error: any) {
+      const ui = mapAuthError(error, 'signIn');
+      dialog.show({
+        title: ui.title,
+        message: ui.message,
+        tone: ui.tone,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleForgotPassword = async () => {
-    if (!email) return Alert.alert('Email Required', 'Enter your email first.');
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
-    if (error) Alert.alert('Error', error.message);
-    else Alert.alert('Sent', 'Check your email for the reset link.');
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      dialog.show({
+        title: 'Email Required',
+        message: 'Enter your email first.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+
+      if (error) throw error;
+
+      dialog.show({
+        title: 'Check your email',
+        message: `If an account exists for ${cleanEmail}, a reset link has been sent.`,
+        tone: 'success',
+      });
+    } catch (error: any) {
+      const ui = mapAuthError(error, 'forgot');
+      dialog.show({
+        title: ui.title,
+        message: ui.message,
+        tone: ui.tone,
+      });
+    }
   };
 
-  const primaryLabel = isSignUp ? 'Create Account' : 'Sign In';
+  const primaryLabel =
+    isSignUp && signupCooldown > 0
+      ? `Create Account (${signupCooldown}s)`
+      : isSignUp
+        ? 'Create Account'
+        : 'Sign In';
+
   const switchLabel = isSignUp
     ? 'Already have an account? Sign In'
     : 'New member? Create an account';
 
   return (
     <View style={styles.container}>
-      {/* --- JOIN COMMUNITY MODAL --- */}
       <Modal
         animationType="fade"
         transparent
@@ -121,8 +244,8 @@ export default function LoginScreen() {
             <Text style={styles.modalTitle}>Welcome to the Nagarathar Nexus!</Text>
             <Text style={styles.modalDescription}>
               We couldn’t find an account for{' '}
-              <Text style={styles.modalEmailStrong}>{email}</Text>. Would you like to join our
-              respectful matchmaking community?
+              <Text style={styles.modalEmailStrong}>{email.trim().toLowerCase()}</Text>. Would you
+              like to join our respectful matchmaking community?
             </Text>
 
             <TouchableOpacity
@@ -221,9 +344,12 @@ export default function LoginScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.primaryButton, loading && { opacity: 0.65 }]}
+            style={[
+              styles.primaryButton,
+              (loading || (isSignUp && signupCooldown > 0)) && { opacity: 0.65 },
+            ]}
             onPress={handleEmailAuth}
-            disabled={loading}
+            disabled={loading || (isSignUp && signupCooldown > 0)}
           >
             {loading ? (
               <ActivityIndicator color={theme.colors.primaryText} />
@@ -241,7 +367,11 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {!isSignUp && (
-            <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotBtn} disabled={loading}>
+            <TouchableOpacity
+              onPress={handleForgotPassword}
+              style={styles.forgotBtn}
+              disabled={loading}
+            >
               <Text style={styles.forgotText}>Forgot Password?</Text>
             </TouchableOpacity>
           )}
@@ -260,7 +390,6 @@ export default function LoginScreen() {
 }
 
 function makeStyles(theme: any) {
-  const s = theme.spacing;
   const r = theme.radius;
 
   return StyleSheet.create({
@@ -395,7 +524,6 @@ function makeStyles(theme: any) {
     switchBtn: { marginTop: 16, alignItems: 'center' },
     switchText: { color: theme.colors.text, fontWeight: '900' },
 
-    // Modal
     modalOverlay: {
       flex: 1,
       backgroundColor: 'rgba(0,0,0,0.5)',

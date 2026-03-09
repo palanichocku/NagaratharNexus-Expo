@@ -26,6 +26,8 @@ import AuditLogScreen from './AuditLog';
 import UserManagementScreen from './UserManagement';
 import FilterPanel from '../(tabs)/search/FilterPanel';
 import ProfileFocusView from '../(tabs)/search/ProfileFocusView';
+import { useSignOut } from '@/src/features/auth/useSignOut';
+import SignOutButton from '@/src/components/SignOutButton';
 
 import { useAppTheme } from '../../src/theme/ThemeProvider';
 import { router } from 'expo-router';
@@ -38,6 +40,7 @@ type AdminTab = 'ADMIN' | 'SEARCH' | 'SETTINGS';
 export default function AdminDashboard() {
   const { theme, themeName, setThemeName, availableThemes } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  <SignOutButton variant="header" onBeforeSignOut={() => setActiveModal(null)} />
 
   const isWeb = Platform.OS === 'web';
   const hasInitialized = useRef(false);
@@ -182,25 +185,32 @@ export default function AdminDashboard() {
     };
   }, [fetchAdminProfile, loadData]);
 
-  const handleSignOut = async () => {
-  try {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
 
-    // ✅ Always use public path (no route group)
-    router.replace('/login');
+  /* DEBUG
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      console.log("UID:", user?.id);
 
-    // ✅ Web hard fallback (still public path)
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.assign('/login');
-    }
-  } catch (e: any) {
-    const msg = e?.message || 'Please try again.';
-    Platform.OS === 'web'
-      ? alert(`Sign out failed: ${msg}`)
-      : Alert.alert('Sign out failed', msg);
-  }
-};
+      const { data: isAdmin } = await supabase.rpc('is_admin');
+      console.log("is_admin:", isAdmin);
+
+      const { data: isStaff } = await supabase.rpc('is_staff');
+      console.log("is_staff:", isStaff);
+
+      const { data: isMod } = await supabase.rpc('is_moderator');
+      console.log("is_moderator:", isMod);
+    })();
+  }, []);
+  */
+
+  const { signOut, isSigningOut } = useSignOut({
+    redirectTo: '/login',
+    onBeforeSignOut: async () => {
+      // ✅ close overlays so clicks never get eaten / stuck
+      setActiveModal(null);
+    },
+  });
     
   const handleExport = useCallback(async () => {
     setLoading(true);
@@ -340,9 +350,10 @@ export default function AdminDashboard() {
         <TouchableOpacity onPress={() => loadData(false)} style={styles.refreshBtn}>
           <Ionicons name="refresh" size={20} color={theme.colors.primary} style={{ transformOrigin: 'center' } as any} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleSignOut} style={styles.signOutHeaderBtn}>
-          <Text style={styles.signOutText}>SIGN OUT</Text>
-        </TouchableOpacity>
+        <SignOutButton
+          variant="header"
+          onBeforeSignOut={() => setActiveModal(null)} // ✅ close overlays first (important!)
+        />
       </View>
 
       <View style={styles.scrollContent}>
@@ -403,11 +414,12 @@ export default function AdminDashboard() {
             <UtilityBtn styles={styles} label="User Explorer" icon="list-circle" color={theme.colors.primary} onPress={() => setActiveModal('USER_REPORT')} />
             <UtilityBtn styles={styles} label="System Analytics" icon="bar-chart" color={theme.colors.success ?? theme.colors.primary} onPress={() => setActiveModal('CHARTS')} />
             <UtilityBtn styles={styles} label="Send Broadcast" icon="megaphone" color={theme.colors.primary} onPress={() => setActiveModal('ANNOUNCEMENT')} />
+            {/* DEBUG <UtilityBtn styles={styles} label="Test Audit Log" icon="bug-outline" color={theme.colors.primary} onPress={runAuditTest}/> */}
 
             {isSysAdmin && (
               <>
                 <SectionHeader styles={styles} title="Administration" style={{ marginTop: 20, color: theme.colors.danger }} />
-                <UtilityBtn styles={styles} label="Add Staff Member" icon="person-add" color={theme.colors.primary} onPress={() => setActiveModal('ADD_MOD')} />
+                {/* <UtilityBtn styles={styles} label="Add Staff Member" icon="person-add" color={theme.colors.primary} onPress={() => setActiveModal('ADD_MOD')} /> */}
                 <UtilityBtn styles={styles} label="Manage Privileges" icon="person-remove" color={theme.colors.danger} onPress={() => setActiveModal('REVOKE_ACCESS')} />
                 <UtilityBtn
                   styles={styles}
@@ -420,12 +432,13 @@ export default function AdminDashboard() {
                     setActiveModal('LOGS');
                   }}
                 />
-                <UtilityBtn styles={styles} label="Data Engine" icon="flask" color={theme.colors.primary} onPress={() => setActiveModal('TEST_GEN')} />
+                {/* <UtilityBtn styles={styles} label="Data Engine" icon="flask" color={theme.colors.primary} onPress={() => setActiveModal('TEST_GEN')} /> */}
                 <UtilityBtn styles={styles} label="Download CSV" icon="download" color={theme.colors.text} onPress={handleExport} />
-                <TouchableOpacity style={styles.dangerBtn} onPress={() => adminService.executeMassCleanup()}>
+                {/* <TouchableOpacity style={styles.dangerBtn} onPress={() => adminService.executeMassCleanup()}>
                   <Ionicons name="trash" size={20} color={theme.colors.danger} style={{ transformOrigin: 'center' } as any} />
                   <Text style={{ color: theme.colors.danger, fontWeight: '800' }}>Mass Data Cleanup</Text>
                 </TouchableOpacity>
+                */}
               </>
             )}
           </View>
@@ -454,6 +467,25 @@ export default function AdminDashboard() {
       </View>
     );
   }
+
+  const runAuditTest = async () => {
+    const result = await adminService.testAuditLogInsert();
+
+    if (result?.success) {
+      if (isWeb) {
+        alert('Audit log test passed. Row inserted successfully.');
+      } else {
+        Alert.alert('Success', 'Audit log test passed. Row inserted successfully.');
+      }
+    } else {
+      const message = result?.error || 'Audit log test failed. Check console.';
+      if (isWeb) {
+        alert(message);
+      } else {
+        Alert.alert('Audit Test Failed', message);
+      }
+    }
+  };
 
   return (
     <View style={styles.pageWrapper}>
@@ -895,6 +927,26 @@ function makeStyles(theme: any) {
       fontSize: 11,
       fontWeight: '800',
       color: success,
+    },
+    actionBtn: {
+      position: 'absolute',
+      right: 24,
+      bottom: 24,
+      backgroundColor: primary,
+      paddingHorizontal: 18,
+      paddingVertical: 14,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: primary,
+      ...Platform.select({
+        web: { boxShadow: '0 10px 24px rgba(0,0,0,0.14)' } as any,
+      }),
+    },
+    actionText: {
+      color: surface2,
+      fontSize: 12,
+      fontWeight: '900',
+      letterSpacing: 0.3,
     },
   });
 }

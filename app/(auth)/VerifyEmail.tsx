@@ -1,4 +1,3 @@
-// /app/(auth)/VerifyEmail.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
@@ -6,33 +5,78 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams } from 'expo-router';
+
 import { REDIRECT_URL, supabase } from '../../src/lib/supabase';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
+import SignOutButton from '../../src/components/SignOutButton';
+import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToast } from '@/src/ui/feedback/useToast';
+import { mapAuthError } from '@/src/features/auth/authMessageMapper';
+import StatusBanner from '@/src/components/ui/StatusBanner';
 
 export default function VerifyEmailScreen() {
   const { theme } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const params = useLocalSearchParams<{ email?: string }>();
+  const dialog = useDialog();
+  const toast = useToast();
 
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [userEmail, setUserEmail] = useState<string | undefined>('');
+  const [userEmail, setUserEmail] = useState<string>(params.email ?? '');
+  const [statusMessage, setStatusMessage] = useState('');
+  const [statusType, setStatusType] = useState<'idle' | 'success' | 'error'>('idle');
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUserEmail(data.user?.email);
-    });
-  }, []);
+    let mounted = true;
+
+    const loadBestEmail = async () => {
+      try {
+        if (params.email && mounted) {
+          setUserEmail(String(params.email).trim().toLowerCase());
+          return;
+        }
+
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        const sessionEmail = session?.user?.email ?? '';
+        if (mounted && sessionEmail) {
+          setUserEmail(sessionEmail);
+        }
+      } catch (error: any) {
+        if (!mounted) return;
+        setStatusType('error');
+        setStatusMessage(error?.message || 'Unable to load your account email.');
+      }
+    };
+
+    void loadBestEmail();
+
+    return () => {
+      mounted = false;
+    };
+  }, [params.email]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
 
     if (countdown > 0) {
-      timer = setInterval(() => setCountdown((prev) => prev - 1), 1000);
+      timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            if (timer) clearInterval(timer);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     }
 
     return () => {
@@ -40,22 +84,39 @@ export default function VerifyEmailScreen() {
     };
   }, [countdown]);
 
+  const setInlineMessage = (type: 'success' | 'error', msg: string) => {
+    setStatusType(type);
+    setStatusMessage(msg);
+  };
+
   const handleCheckStatus = async () => {
     setLoading(true);
-    try {
-      const { data, error } = await supabase.auth.getUser();
-      if (error) throw error;
+    setStatusMessage('');
+    setStatusType('idle');
 
-      if (data.user?.email_confirmed_at) {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (session?.user?.email_confirmed_at) {
         const msg = 'Email verified! Welcome to the community.';
-        Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Success', msg);
-        // Note: app/_layout.tsx will see the verified status and redirect automatically
-      } else {
-        const msg = 'Verification not yet detected. Please click the link in your email.';
-        Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Still Pending', msg);
+        setInlineMessage('success', msg);
+        toast.show(msg, 'success');
+        return;
       }
+
+      const msg =
+        'Verification not yet detected. Please click the link in your email, then return here and try again.';
+      setInlineMessage('error', msg);
     } catch (error: any) {
-      // eslint-disable-next-line no-console
+      const ui = mapAuthError(error, 'signIn');
+      setInlineMessage('error', ui.message);
+      dialog.show({
+        title: ui.title,
+        message: ui.message,
+        tone: ui.tone,
+      });
       console.error('Verification Check Error:', error?.message || error);
     } finally {
       setLoading(false);
@@ -63,13 +124,28 @@ export default function VerifyEmailScreen() {
   };
 
   const handleResendEmail = async () => {
-    if (!userEmail || countdown > 0) return;
+    if (resending || countdown > 0) return;
+
+    const cleanEmail = userEmail.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      dialog.show({
+        title: 'Email not found',
+        message:
+          'We could not find your email address for this session. Please go back and sign up again.',
+        tone: 'error',
+      });
+      return;
+    }
 
     setResending(true);
+    setStatusMessage('');
+    setStatusType('idle');
+
     try {
       const { error } = await supabase.auth.resend({
         type: 'signup',
-        email: userEmail,
+        email: cleanEmail,
         options: {
           emailRedirectTo: `${REDIRECT_URL}/Onboarding`,
         },
@@ -77,22 +153,31 @@ export default function VerifyEmailScreen() {
 
       if (error) throw error;
 
-      const msg = 'A new link has been sent to your inbox.';
-      Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Sent', msg);
-
       setCountdown(60);
+      const msg = 'A new verification link has been sent to your inbox.';
+      setInlineMessage('success', msg);
+      toast.show(msg, 'success');
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      const ui = mapAuthError(error, 'resend');
+
+      if (ui.cooldownSeconds) {
+        setCountdown(ui.cooldownSeconds);
+      }
+
+      setInlineMessage('error', ui.message);
+      dialog.show({
+        title: ui.title,
+        message: ui.message,
+        tone: ui.tone,
+      });
+
+      console.error('Resend Verification Error:', error?.message || error);
     } finally {
       setResending(false);
     }
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
-
-  const resendDisabled = countdown > 0 || resending;
+  const resendDisabled = countdown > 0 || resending || !userEmail.trim();
 
   return (
     <View style={styles.container}>
@@ -105,7 +190,7 @@ export default function VerifyEmailScreen() {
 
         <Text style={styles.subtitle}>
           Check your inbox for a verification link sent to:{'\n'}
-          <Text style={styles.boldEmail}>{userEmail || '—'}</Text>
+          <Text style={styles.boldEmail}>{userEmail || 'your email address'}</Text>
         </Text>
 
         <View style={styles.infoChip}>
@@ -113,8 +198,16 @@ export default function VerifyEmailScreen() {
           <Text style={styles.infoChipText}>Verify email before setting up your profile</Text>
         </View>
 
+        {!!statusMessage && (
+          <StatusBanner
+            theme={theme}
+            tone={statusType === 'success' ? 'success' : 'error'}
+            text={statusMessage}
+          />
+        )}
+
         <TouchableOpacity
-          style={[styles.primaryBtn, loading && { opacity: 0.65 }]}
+          style={[styles.primaryBtn, loading ? styles.dimmed : undefined]}
           onPress={handleCheckStatus}
           disabled={loading}
           activeOpacity={0.85}
@@ -137,18 +230,22 @@ export default function VerifyEmailScreen() {
         <TouchableOpacity
           onPress={handleResendEmail}
           disabled={resendDisabled}
-          style={[styles.resendBtn, resendDisabled && { opacity: 0.55 }]}
+          style={[styles.resendBtn, resendDisabled ? styles.dimmed : undefined]}
           activeOpacity={0.8}
         >
-          <Ionicons name="refresh" size={16} color={theme.colors.text} />
-          <Text style={styles.resendText}>
-            {countdown > 0 ? `Resend in ${countdown}s` : "Didn't receive it? Resend Email"}
-          </Text>
+          {resending ? (
+            <ActivityIndicator size="small" color={theme.colors.text} />
+          ) : (
+            <>
+              <Ionicons name="refresh" size={16} color={theme.colors.text} />
+              <Text style={styles.resendText}>
+                {countdown > 0 ? `Resend in ${countdown}s` : "Didn't receive it? Resend Email"}
+              </Text>
+            </>
+          )}
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn} activeOpacity={0.7}>
-          <Text style={styles.logoutText}>Cancel & Logout</Text>
-        </TouchableOpacity>
+        <SignOutButton variant="row" label="CANCEL & LOGOUT" style={styles.logoutBtn} />
       </View>
     </View>
   );
@@ -274,16 +371,12 @@ function makeStyles(theme: any) {
     },
 
     logoutBtn: {
+      width: '100%',
       marginTop: 18,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: r.chip,
     },
 
-    logoutText: {
-      color: theme.colors.danger,
-      fontWeight: '900',
-      fontSize: 13,
+    dimmed: {
+      opacity: 0.6,
     },
   });
 }

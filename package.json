@@ -6,8 +6,21 @@
     "start": "expo start",
     "start:dev": "./switch_env.sh dev && npx expo start -c",
     "start:prod": "./switch_env.sh prod && npx expo start -c",
+    "start:local": "./switch_env.sh local && npx expo start -c",
     "env:status": "./switch_env.sh status",
     "reset-project": "node ./scripts/reset-project.js",
+    "env:sanity": "dotenv -e .env.test -- tsx scripts/env-sanity.ts",
+    "db:reset": "supabase db reset",
+    "seed:test": "dotenv -e .env.test -- tsx scripts/seed-test-data.ts",
+    "test:functional": "dotenv -e .env.test -- vitest run tests/functional --reporter=verbose",
+    "test:perf": "dotenv -e .env.test -- vitest run tests/perf --reporter=verbose",
+    "test:runner": "dotenv -e .env.test -- tsx scripts/test-runner.ts",
+    "seed:test-users": "dotenv -e .env.development -- tsx scripts/generate-test-users.ts",
+    "delete:test-users": "dotenv -e .env.development -- tsx scripts/delete-test-users.ts",
+    "cleanup:user": "dotenv -e .env.development -- tsx scripts/cleanup-user.ts",
+    "seed:staff:local": "./scripts/seed-staff.sh local",
+    "seed:staff:dev":   "dotenv -e .env.development -- node scripts/seed-staff.mjs",
+    "seed:staff:prod":  "dotenv -e .env.production  -- node scripts/seed-staff.mjs",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
@@ -53,10 +66,19 @@
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "@playwright/test": "^1.58.2",
     "@types/react": "~19.1.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "dotenv": "^17.3.1",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
-    "typescript": "~5.9.2"
+    "lighthouse": "^13.0.3",
+    "pg": "^8.19.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.2",
+    "vitest": "^4.0.18"
   },
   "private": true
 }

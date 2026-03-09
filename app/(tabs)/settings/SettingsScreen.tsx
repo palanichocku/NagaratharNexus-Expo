@@ -15,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/src/lib/supabase';
 import { useRouter } from 'expo-router';
 import { useAppTheme } from '@/src/theme/ThemeProvider';
+import { useSignOut } from '@/src/features/auth/useSignOut';
+import SignOutButton from '@/src/components/SignOutButton';
 
 export default function SettingsScreen() {
   const { theme, themeName, setThemeName, availableThemes } = useAppTheme();
@@ -74,25 +76,9 @@ export default function SettingsScreen() {
   }
 };
 
-const handleLogout = async () => {
-  try {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-
-    // ✅ Always use public path (no route group)
-    router.replace('/login');
-
-    // ✅ Web hard fallback (still public path)
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.assign('/login');
-    }
-  } catch (e: any) {
-    const msg = e?.message || 'Please try again.';
-    Platform.OS === 'web'
-      ? alert(`Sign out failed: ${msg}`)
-      : Alert.alert('Sign out failed', msg);
-  }
-};
+const { signOut, isSigningOut } = useSignOut({
+  redirectTo: '/login',
+});
 
 const handleDeactivate = async () => {
   Alert.alert(
@@ -240,11 +226,8 @@ const ThemePicker = () => (
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Account</Text>
 
-        <TouchableOpacity style={styles.actionBtn} onPress={handleLogout} activeOpacity={0.9}>
-          <Ionicons name="log-out-outline" size={18} color={theme.colors.text} />
-          <Text style={styles.actionText}>Log out</Text>
-        </TouchableOpacity>
-
+        <SignOutButton variant="solid" label="SIGN OUT" />
+        
         <TouchableOpacity
           style={[styles.actionBtn, styles.dangerBtn]}
           onPress={handleDeactivate}

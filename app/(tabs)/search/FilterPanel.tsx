@@ -104,7 +104,27 @@ function decodeExcludePair(v: string): { kovil: string; pirivu: string } {
 
 const MAX_INTERESTS = 3;
 
-export default function FilterPanel({ filters, onFilterChange, onApply, totalResults }: any) {
+type Props = {
+  filters: any;
+  onFilterChange: (next: any) => void;
+  onApply: () => void;
+
+  // NOTE: This is NOT total across all pages. It’s the count shown on the current page.
+  totalResults?: number;
+
+  // Optional pagination context for better header messaging (no performance hit)
+  page?: number; // zero-based
+  hasNextPage?: boolean;
+};
+
+export default function FilterPanel({
+  filters,
+  onFilterChange,
+  onApply,
+  totalResults,
+  page,
+  hasNextPage,
+}: Props) {
   const { theme } = useAppTheme();
 
   // ✅ Map to theme tokens so Warm/Cool changes apply automatically
@@ -383,11 +403,28 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
     [clearExcludeForKovil, excludeKovilChipActive, toggleExcludeWholeKovil],
   );
 
+  // ✅ Meaningful subtitle: Page + shown-on-this-page (NO filter count)
   const subtitleText = useMemo(() => {
-    const n = Number(totalResults ?? 0);
-    if (!Number.isFinite(n) || n <= 0) return 'Update results to refresh';
-    return `${n.toLocaleString?.() || n} results`;
-  }, [totalResults]);
+    const parts: string[] = [];
+
+    if (typeof page === 'number' && Number.isFinite(page)) {
+      const p = page + 1;
+      parts.push(`Page ${p}`);
+    }
+
+    const shown = Number(totalResults ?? 0);
+    if (Number.isFinite(shown) && shown > 0) {
+      parts.push(`${shown.toLocaleString?.() || shown} shown`);
+    } else {
+      parts.push('Adjust filters and tap Apply');
+    }
+
+    if (typeof hasNextPage === 'boolean' && hasNextPage === false) {
+      parts.push('End');
+    }
+
+  return parts.join(' • ');
+}, [hasNextPage, page, totalResults]);
 
   const FilterSection = useCallback(
     ({ id, label, children, active = 0 }: { id: string; label: string; children: any; active?: number }) => (
@@ -401,11 +438,7 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
               </View>
             ) : null}
           </View>
-          <Ionicons
-            name={expanded[id] ? 'chevron-up' : 'chevron-down'}
-            size={18}
-            color={tokens.muted}
-          />
+          <Ionicons name={expanded[id] ? 'chevron-up' : 'chevron-down'} size={18} color={tokens.muted} />
         </TouchableOpacity>
         {expanded[id] ? <View style={styles.cardBody}>{children}</View> : null}
       </View>
@@ -452,10 +485,7 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Refine Search</Text>
-          <Text style={styles.headerSubtitle}>
-            {subtitleText}
-            {activeCount > 0 ? ` • ${activeCount} active` : ''}
-          </Text>
+          <Text style={styles.headerSubtitle}>{subtitleText}</Text>
         </View>
 
         <TouchableOpacity accessibilityRole="button" onPress={handleReset} style={styles.resetBtn}>
@@ -491,11 +521,7 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
                   returnKeyType="done"
                 />
                 {!!localQuery && (
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    onPress={() => setLocalQuery('')}
-                    style={styles.searchClearBtn}
-                  >
+                  <TouchableOpacity accessibilityRole="button" onPress={() => setLocalQuery('')} style={styles.searchClearBtn}>
                     <Ionicons name="close" size={16} color={tokens.muted} />
                   </TouchableOpacity>
                 )}
@@ -508,18 +534,8 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
                 {minAge} – {maxAge} years
               </Text>
               <View style={styles.stepGrid}>
-                <Stepper
-                  label="Min"
-                  valueText={`${minAge}`}
-                  onMinus={() => setAge(minAge - 1, maxAge)}
-                  onPlus={() => setAge(minAge + 1, maxAge)}
-                />
-                <Stepper
-                  label="Max"
-                  valueText={`${maxAge}`}
-                  onMinus={() => setAge(minAge, maxAge - 1)}
-                  onPlus={() => setAge(minAge, maxAge + 1)}
-                />
+                <Stepper label="Min" valueText={`${minAge}`} onMinus={() => setAge(minAge - 1, maxAge)} onPlus={() => setAge(minAge + 1, maxAge)} />
+                <Stepper label="Max" valueText={`${maxAge}`} onMinus={() => setAge(minAge, maxAge - 1)} onPlus={() => setAge(minAge, maxAge + 1)} />
               </View>
             </FilterSection>
 
@@ -530,28 +546,14 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
                 <Text style={styles.unitLabel}>  (inches)</Text>
               </Text>
               <View style={styles.stepGrid}>
-                <Stepper
-                  label="Min"
-                  valueText={formatHeightSmart(minHeight)}
-                  onMinus={() => setHeight(minHeight - 1, maxHeight)}
-                  onPlus={() => setHeight(minHeight + 1, maxHeight)}
-                />
-                <Stepper
-                  label="Max"
-                  valueText={formatHeightSmart(maxHeight)}
-                  onMinus={() => setHeight(minHeight, maxHeight - 1)}
-                  onPlus={() => setHeight(minHeight, maxHeight + 1)}
-                />
+                <Stepper label="Min" valueText={formatHeightSmart(minHeight)} onMinus={() => setHeight(minHeight - 1, maxHeight)} onPlus={() => setHeight(minHeight + 1, maxHeight)} />
+                <Stepper label="Max" valueText={formatHeightSmart(maxHeight)} onMinus={() => setHeight(minHeight, maxHeight - 1)} onPlus={() => setHeight(minHeight, maxHeight + 1)} />
               </View>
             </FilterSection>
 
             {/* Location */}
             <FilterSection id="location" label="Location" active={filters?.countries?.length || 0}>
-              <FacetFilter
-                options={facets.countries || []}
-                selectedValues={filters?.countries || []}
-                onToggle={(v: string) => toggleMulti('countries', v)}
-              />
+              <FacetFilter options={facets.countries || []} selectedValues={filters?.countries || []} onToggle={(v: string) => toggleMulti('countries', v)} />
             </FilterSection>
 
             {/* Exclude Kovil/Pirivu */}
@@ -631,11 +633,7 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
                     })()}
                   </View>
 
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    onPress={() => clearExcludeForKovil(openExcludeKovil)}
-                    style={styles.clearRow}
-                  >
+                  <TouchableOpacity accessibilityRole="button" onPress={() => clearExcludeForKovil(openExcludeKovil)} style={styles.clearRow}>
                     <Ionicons name="trash" size={16} color={tokens.primary} />
                     <Text style={styles.clearText}>Clear exclusions for {openExcludeKovil}</Text>
                   </TouchableOpacity>
@@ -648,23 +646,13 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
               <Text style={styles.helperText}>
                 Pick up to {MAX_INTERESTS}. {selectedInterestCount}/{MAX_INTERESTS} selected.
               </Text>
-              {interestLimitHit ? (
-                <Text style={styles.limitText}>You can select up to {MAX_INTERESTS} interests.</Text>
-              ) : null}
-              <FacetFilter
-                options={facets.interests || []}
-                selectedValues={filters?.interests || []}
-                onToggle={(v: string) => toggleMulti('interests', v)}
-              />
+              {interestLimitHit ? <Text style={styles.limitText}>You can select up to {MAX_INTERESTS} interests.</Text> : null}
+              <FacetFilter options={facets.interests || []} selectedValues={filters?.interests || []} onToggle={(v: string) => toggleMulti('interests', v)} />
             </FilterSection>
 
             {/* Education */}
             <FilterSection id="education" label="Education" active={filters?.education?.length || 0}>
-              <FacetFilter
-                options={facets.education || []}
-                selectedValues={filters?.education || []}
-                onToggle={(v: string) => toggleMulti('education', v)}
-              />
+              <FacetFilter options={facets.education || []} selectedValues={filters?.education || []} onToggle={(v: string) => toggleMulti('education', v)} />
             </FilterSection>
           </>
         )}
@@ -677,12 +665,11 @@ export default function FilterPanel({ filters, onFilterChange, onApply, totalRes
         </TouchableOpacity>
 
         <TouchableOpacity accessibilityRole="button" onPress={handleApplyPress} style={styles.bottomPrimaryBtn}>
-          <Text style={styles.bottomPrimaryText}>Apply</Text>
-          {typeof totalResults !== 'undefined' ? (
+          <Text style={styles.bottomPrimaryText}>Apply Filters</Text>
+
+          {activeCount > 0 ? (
             <View style={styles.bottomPill}>
-              <Text style={styles.bottomPillText}>
-                {Number(totalResults || 0).toLocaleString?.() || totalResults}
-              </Text>
+              <Text style={styles.bottomPillText}>{activeCount} Active</Text>
             </View>
           ) : null}
         </TouchableOpacity>
@@ -699,7 +686,9 @@ function makeStyles(theme: any, t: any) {
 
     header: {
       paddingTop: 18,
-      paddingHorizontal: 18,
+      paddingLeft: 18,
+      paddingRight: 24,
+      //paddingHorizontal: 18,
       paddingBottom: 14,
       borderBottomWidth: 1,
       borderBottomColor: t.border,
@@ -720,6 +709,12 @@ function makeStyles(theme: any, t: any) {
       borderWidth: 1,
       borderColor: t.border,
       backgroundColor: t.surface,
+      alignSelf: 'flex-start',
+      marginTop: 2,
+      transform: [{ translateY: -4 }],
+      position: 'relative',
+      marginRight: 10,
+      right: 12,
     },
     resetText: { marginLeft: 6, fontSize: 12, fontWeight: '900', color: t.primary },
 
