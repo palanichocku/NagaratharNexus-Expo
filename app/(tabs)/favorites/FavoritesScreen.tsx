@@ -204,7 +204,7 @@ const cardW = Math.max(300, Math.min(listW, isWeb ? listW - 40 : listW - 12));
                   <View style={styles.perfBadge}>
                     <Ionicons name="flash" size={12} color={perfAccent} />
                     <Text style={[styles.perfText, { color: perfAccent }]}>
-                      FAST • {fav.durationMs}ms
+                      FAST • {Math.round(Number(fav.durationMs) || 0)}ms
                     </Text>
                   </View>
                 </View>

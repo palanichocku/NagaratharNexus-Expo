@@ -19,28 +19,54 @@ import * as Sharing from 'expo-sharing';
 
 import { supabase } from '../../src/lib/supabase';
 import { adminService } from '../../src/services/admin.service';
-import { SearchCursor, searchProfiles } from '../../src/services/search.service';
+import { SearchCursor } from '../../src/services/search.service';
 import { ProfileDisplay } from '../../src/components/ProfileDisplay';
 import AnalyticsScreen from './Analytics';
 import AuditLogScreen from './AuditLog';
 import UserManagementScreen from './UserManagement';
-import FilterPanel from '../(tabs)/search/FilterPanel';
-import ProfileFocusView from '../(tabs)/search/ProfileFocusView';
 import { useSignOut } from '@/src/features/auth/useSignOut';
 import SignOutButton from '@/src/components/SignOutButton';
 
 import { useAppTheme } from '../../src/theme/ThemeProvider';
-import { router } from 'expo-router';
 import SearchExperience from '@/src/features/search/SearchExperience';
+import SlotCard from '@/src/components/moderator-calendar/SlotCard';
+import {
+  moderatorCalendarService,
+  type ModeratorSlot,
+} from '@/src/services/moderatorCalendar.service';
+import {
+  CANADA_TIMEZONE,
+  toYMDInTimeZone,
+} from '@/src/utils/timezone';
+import { notify } from '@/src/utils/notify';
+import { useDialog } from '@/src/ui/feedback/useDialog';
 
 const FS: any = FileSystem;
 const PAGE_SIZE = 20;
-type AdminTab = 'ADMIN' | 'SEARCH' | 'SETTINGS';
+type AdminTab = 'ADMIN' | 'SEARCH' | 'CALENDAR' | 'SETTINGS';
+const TIME_OPTIONS = [
+  '06:00', '06:30',
+  '07:00', '07:30',
+  '08:00', '08:30',
+  '09:00', '09:30',
+  '10:00', '10:30',
+  '11:00', '11:30',
+  '12:00', '12:30',
+  '13:00', '13:30',
+  '14:00', '14:30',
+  '15:00', '15:30',
+  '16:00', '16:30',
+  '17:00', '17:30',
+  '18:00', '18:30',
+  '19:00', '19:30',
+  '20:00', '20:30',
+  '21:00', '21:30',
+  '22:00', '22:30',
+];
 
 export default function AdminDashboard() {
   const { theme, themeName, setThemeName, availableThemes } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  <SignOutButton variant="header" onBeforeSignOut={() => setActiveModal(null)} />
 
   const isWeb = Platform.OS === 'web';
   const hasInitialized = useRef(false);
@@ -107,6 +133,33 @@ export default function AdminDashboard() {
     themeName: 'warm',
   });
 
+  // --- CALENDAR STATE ---
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarSaving, setCalendarSaving] = useState(false);
+  const [calendarSlots, setCalendarSlots] = useState<ModeratorSlot[]>([]);
+  const [calendarUserId, setCalendarUserId] = useState<string | null>(null);
+  const [calendarDay, setCalendarDay] = useState(() => new Date());
+  const [rescheduleFromSlotId, setRescheduleFromSlotId] = useState<string | null>(null);
+  const [slotStartTime, setSlotStartTime] = useState('09:00');
+  const [slotEndTime, setSlotEndTime] = useState('17:00');
+  const [timePickerMode, setTimePickerMode] = useState<'START' | 'END' | null>(null);
+  const dialog = useDialog();
+
+  const calendarDayLabel = useMemo(
+    () => toYMDInTimeZone(calendarDay, CANADA_TIMEZONE),
+    [calendarDay]
+  );
+
+  const endTimeOptions = useMemo(
+    () => TIME_OPTIONS.filter((t) => t > slotStartTime),
+    [slotStartTime]
+  );
+
+  const isStaff = useMemo(
+    () => userRole === 'ADMIN' || userRole === 'MODERATOR',
+    [userRole]
+  );
+
   /** Reset keyset pagination state (used on filter change / reset) */
   const resetSearchPaging = useCallback(() => {
     setCursorStack([null]);
@@ -160,6 +213,330 @@ export default function AdminDashboard() {
       setLoading(false);
     }
   }, []);
+
+    const loadCalendar = useCallback(async () => {
+    setCalendarLoading(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) throw new Error('Not signed in');
+
+      setCalendarUserId(user.id);
+
+      const start = new Date(calendarDay);
+      start.setHours(0, 0, 0, 0);
+
+      const end = new Date(calendarDay);
+      end.setDate(end.getDate() + 1);
+      end.setHours(0, 0, 0, 0);
+
+      const data = await moderatorCalendarService.getSlotsForRangeWithBookingDetails(
+        start.toISOString(),
+        end.toISOString()
+      );
+
+      setCalendarSlots(data);
+    } catch (e: any) {
+      console.error('Calendar load failed:', e);
+      if (activeTab === 'CALENDAR') {
+        Alert.alert('Error', e.message ?? 'Failed to load calendar');
+      }
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [calendarDay, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'CALENDAR') return;
+    loadCalendar();
+  }, [activeTab, loadCalendar]);
+
+  useEffect(() => {
+    const unsubscribe = moderatorCalendarService.subscribeToSlots(() => {
+      if (activeTab === 'CALENDAR') {
+        loadCalendar();
+      }
+    });
+
+    return unsubscribe;
+  }, [activeTab, loadCalendar]);
+
+  const createSlotsForSelectedWindow = useCallback(async () => {
+    try {
+      if (!slotStartTime || !slotEndTime) {
+        dialog.show({
+          title: 'Missing Time',
+          message: 'Please enter both start and end time.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      if (slotEndTime <= slotStartTime) {
+        dialog.show({
+          title: 'Invalid Range',
+          message: 'End time must be after start time.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      setCalendarSaving(true);
+
+      await moderatorCalendarService.createSlotsForDay(
+        calendarDayLabel,
+        slotStartTime,
+        slotEndTime,
+        CANADA_TIMEZONE
+      );
+
+      await loadCalendar();
+    } catch (e: any) {
+      Alert.alert('Unable to create slots', e.message ?? 'Please try again');
+    } finally {
+      setCalendarSaving(false);
+    }
+  }, [calendarDayLabel, loadCalendar, slotStartTime, slotEndTime, dialog]);
+
+
+  const handleDeleteCalendarSlot = useCallback(
+    async (slotId: string) => {
+      try {
+        const ok = isWeb
+          ? window.confirm('Delete this open slot?')
+          : true;
+
+        if (!ok) return;
+
+        setCalendarSaving(true);
+        await moderatorCalendarService.deleteSlot(slotId);
+        await loadCalendar();
+
+        if (!isWeb) {
+          Alert.alert('Deleted', 'The slot has been removed.');
+        }
+      } catch (e: any) {
+        Alert.alert('Unable to delete slot', e.message ?? 'Please try again');
+      } finally {
+        setCalendarSaving(false);
+      }
+    },
+    [isWeb, loadCalendar]
+  );
+
+  const handleBookCalendarSlot = useCallback(
+    async (slotId: string) => {
+      try {
+        setCalendarSaving(true);
+
+        if (rescheduleFromSlotId) {
+          await moderatorCalendarService.reschedule(rescheduleFromSlotId, slotId);
+          setRescheduleFromSlotId(null);
+          Alert.alert('Rescheduled', 'The booking has been moved.');
+        } else {
+          await moderatorCalendarService.bookSlot(slotId);
+          Alert.alert('Booked', 'The slot has been reserved.');
+        }
+
+        await loadCalendar();
+      } catch (e: any) {
+        Alert.alert('Unable to save', e.message ?? 'Please try again');
+      } finally {
+        setCalendarSaving(false);
+      }
+    },
+    [loadCalendar, rescheduleFromSlotId]
+  );
+
+  const handleCancelCalendarSlot = useCallback(
+    async (slotId: string) => {
+      try {
+        setCalendarSaving(true);
+        await moderatorCalendarService.cancelBooking(slotId, 'Cancelled from admin dashboard');
+        setRescheduleFromSlotId(null);
+        await loadCalendar();
+        Alert.alert('Cancelled', 'The booking has been cancelled.');
+      } catch (e: any) {
+        Alert.alert('Unable to cancel', e.message ?? 'Please try again');
+      } finally {
+        setCalendarSaving(false);
+      }
+    },
+    [loadCalendar]
+  );
+
+  const shiftCalendarDay = useCallback((delta: number) => {
+    const next = new Date(calendarDay);
+    next.setDate(next.getDate() + delta);
+    setCalendarDay(next);
+  }, [calendarDay]);
+
+    const renderModeratorCalendar = () => (
+      <View style={styles.calendarPage}>
+        <View style={styles.calendarHeader}>
+          <View>
+            <Text style={styles.settingsTitle}>Moderator Calendar</Text>
+            <Text style={styles.calendarSubtitle}>
+              Toronto, IST, and GMT shown together
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.calendarDayBar}>
+          <TouchableOpacity
+            onPress={() => shiftCalendarDay(-1)}
+            style={styles.calendarDayArrow}
+          >
+            <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
+          </TouchableOpacity>
+
+          <Text style={styles.calendarDayText}>{calendarDayLabel}</Text>
+
+          <TouchableOpacity
+            onPress={() => shiftCalendarDay(1)}
+            style={styles.calendarDayArrow}
+          >
+            <Ionicons name="chevron-forward" size={18} color={theme.colors.text} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.slotComposerCard}>
+          <Text style={styles.slotComposerTitle}>Create Availability</Text>
+          <Text style={styles.slotComposerSub}>
+            Add half-hour slots for the selected day in Toronto time.
+          </Text>
+
+          <View style={styles.slotComposerRow}>
+            <View style={styles.slotTimeField}>
+              <Text style={styles.slotTimeLabel}>Start</Text>
+              <TouchableOpacity
+                style={styles.slotTimeInput}
+                onPress={() => setTimePickerMode('START')}
+              >
+                <Text style={styles.slotTimeInputText}>{slotStartTime}</Text>
+                <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.slotTimeField}>
+              <Text style={styles.slotTimeLabel}>End</Text>
+              <TouchableOpacity
+                style={styles.slotTimeInput}
+                onPress={() => setTimePickerMode('END')}
+              >
+                <Text style={styles.slotTimeInputText}>{slotEndTime}</Text>
+                <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.calendarCreateBtn}
+              onPress={createSlotsForSelectedWindow}
+              disabled={calendarSaving}
+            >
+              <Ionicons
+                name="add-circle-outline"
+                size={18}
+                color={theme.colors.text}
+              />
+              <Text style={styles.calendarCreateBtnText}>Add Slots</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.calendarDangerBtn}
+              onPress={async () => {
+                try {
+                  const ok = isWeb
+                    ? window.confirm(`Clear all open slots for ${calendarDayLabel}?`)
+                    : true;
+
+                  if (!ok) return;
+
+                  setCalendarSaving(true);
+                  const count = await moderatorCalendarService.clearOpenSlotsForDay(
+                    calendarDayLabel,
+                    CANADA_TIMEZONE
+                  );
+                  await loadCalendar();
+
+                  if (isWeb) {
+                    alert(`Cleared ${count} open slot${count === 1 ? '' : 's'}.`);
+                  } else {
+                    Alert.alert('Cleared', `Removed ${count} open slot${count === 1 ? '' : 's'}.`);
+                  }
+                } catch (e: any) {
+                  Alert.alert('Unable to clear slots', e.message ?? 'Please try again');
+                } finally {
+                  setCalendarSaving(false);
+                }
+              }}
+              disabled={calendarSaving}
+            >
+              <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
+              <Text style={styles.calendarDangerBtnText}>Clear Open Slots</Text>
+            </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {rescheduleFromSlotId ? (
+                      <View style={styles.calendarBanner}>
+                        <Text style={styles.calendarBannerText}>
+                          Choose a new open slot to finish rescheduling.
+                        </Text>
+                        <TouchableOpacity onPress={() => setRescheduleFromSlotId(null)}>
+                          <Text style={styles.calendarBannerLink}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {calendarLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text style={styles.loadingText}>Loading calendar...</Text>
+          </View>
+        ) : (
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.calendarListContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {calendarSlots.length === 0 ? (
+              <View style={styles.calendarEmptyCard}>
+                <Text style={styles.calendarEmptyTitle}>No slots yet</Text>
+                <Text style={styles.calendarEmptySub}>
+                  Create availability for this day to start taking bookings.
+                </Text>
+              </View>
+            ) : (
+              calendarSlots.map((slot) => {
+                const isMine =
+                  !!calendarUserId && slot.booked_by_user_id === calendarUserId;
+
+                return (
+                  <SlotCard
+                    key={slot.id}
+                    slot={slot}
+                    isModerator={true}
+                    isMine={isMine}
+                    onBook={() => handleBookCalendarSlot(slot.id)}
+                    onCancel={() => handleCancelCalendarSlot(slot.id)}
+                    onReschedule={() => setRescheduleFromSlotId(slot.id)}
+                    onDelete={() => handleDeleteCalendarSlot(slot.id)}
+                  />
+                );
+              })
+            )}
+          </ScrollView>
+        )}
+
+        {calendarSaving ? (
+          <View style={styles.calendarSavingOverlay}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+          </View>
+        ) : null}
+    </View>
+);
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -492,13 +869,20 @@ export default function AdminDashboard() {
       <View style={styles.sidebar}>
         <SidebarIcon icon="shield" label="DASHBOARD" active={activeTab === 'ADMIN'} onPress={() => setActiveTab('ADMIN')} styles={styles} theme={theme} />
         <SidebarIcon icon="compass" label="EXPLORER" active={activeTab === 'SEARCH'} onPress={() => setActiveTab('SEARCH')} styles={styles} theme={theme} />
+        <SidebarIcon icon="calendar-outline" label="CALENDAR" active={activeTab === 'CALENDAR'} onPress={() => setActiveTab('CALENDAR')} styles={styles} theme={theme} />
         {isSysAdmin && (
           <SidebarIcon icon="options" label="SETTINGS" active={activeTab === 'SETTINGS'} onPress={() => setActiveTab('SETTINGS')} styles={styles} theme={theme} />
         )}
       </View>
 
       <View style={styles.mainContainer}>
-        {activeTab === 'SEARCH' ? renderAdminSearch() : activeTab === 'SETTINGS' ? renderSettings() : renderWorkspace()}
+        {activeTab === 'SEARCH'
+          ? renderAdminSearch()
+          : activeTab === 'CALENDAR'
+            ? renderModeratorCalendar()
+            : activeTab === 'SETTINGS'
+              ? renderSettings()
+              : renderWorkspace()}
       </View>
 
       {/* MODALS (✅ preserved + themed) */}
@@ -707,6 +1091,65 @@ export default function AdminDashboard() {
           <AnalyticsScreen />
         </View>
       </Modal>
+
+      <Modal visible={timePickerMode !== null} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.timePickerModal}>
+            <Text style={styles.modalTitle}>
+              {timePickerMode === 'START' ? 'Select Start Time' : 'Select End Time'}
+            </Text>
+
+            <ScrollView
+              style={styles.timePickerList}
+              contentContainerStyle={{ paddingBottom: 8 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {(timePickerMode === 'START' ? TIME_OPTIONS : endTimeOptions).map((time) => {
+                const active =
+                  timePickerMode === 'START' ? slotStartTime === time : slotEndTime === time;
+
+                return (
+                  <TouchableOpacity
+                    key={time}
+                    style={[
+                      styles.timePickerItem,
+                      active ? styles.timePickerItemActive : null,
+                    ]}
+                    onPress={() => {
+                      if (timePickerMode === 'START') {
+                        setSlotStartTime(time);
+
+                        if (slotEndTime <= time) {
+                          const nextEnd = TIME_OPTIONS.find((t) => t > time);
+                          if (nextEnd) setSlotEndTime(nextEnd);
+                        }
+                      } else {
+                        setSlotEndTime(time);
+                      }
+
+                      setTimePickerMode(null);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.timePickerItemText,
+                        active ? styles.timePickerItemTextActive : null,
+                      ]}
+                    >
+                      {time}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity onPress={() => setTimePickerMode(null)}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -948,5 +1391,220 @@ function makeStyles(theme: any) {
       fontWeight: '900',
       letterSpacing: 0.3,
     },
+        calendarPage: {
+      flex: 1,
+      padding: 32,
+      backgroundColor: bg,
+    },
+    calendarHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 18,
+      gap: 16,
+    },
+    calendarSubtitle: {
+      marginTop: 6,
+      fontSize: 13,
+      fontWeight: '700',
+      color: muted,
+    },
+    calendarCreateBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: border,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    calendarCreateBtnText: {
+      fontWeight: '800',
+      color: text,
+      fontSize: 13,
+    },
+    calendarDayBar: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 14,
+      marginBottom: 16,
+    },
+    calendarDayArrow: {
+      backgroundColor: surface,
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 999,
+      padding: 8,
+    },
+    calendarDayText: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: text,
+    },
+    calendarBanner: {
+      marginBottom: 14,
+      borderRadius: 14,
+      padding: 12,
+      backgroundColor: '#FFFBEB',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    calendarBannerText: {
+      color: '#92400E',
+      fontWeight: '700',
+      flex: 1,
+      marginRight: 10,
+    },
+    calendarBannerLink: {
+      color: '#92400E',
+      fontWeight: '900',
+    },
+    calendarListContent: {
+      paddingBottom: 40,
+    },
+    calendarEmptyCard: {
+      backgroundColor: surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 20,
+    },
+    calendarEmptyTitle: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: text,
+    },
+    calendarEmptySub: {
+      marginTop: 8,
+      color: muted,
+      lineHeight: 20,
+      fontWeight: '600',
+    },
+    calendarSavingOverlay: {
+      position: 'absolute',
+      right: 24,
+      bottom: 24,
+      backgroundColor: surface2,
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    slotComposerCard: {
+  backgroundColor: surface,
+  borderRadius: 20,
+  borderWidth: 1,
+  borderColor: border,
+  padding: 18,
+  marginBottom: 18,
+},
+slotComposerTitle: {
+  fontSize: 15,
+  fontWeight: '900',
+  color: text,
+},
+slotComposerSub: {
+  marginTop: 4,
+  fontSize: 12,
+  fontWeight: '700',
+  color: muted,
+},
+slotComposerRow: {
+  flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+  gap: 12,
+  marginTop: 14,
+  alignItems: Platform.OS === 'web' ? 'flex-end' : 'stretch',
+},
+slotTimeField: {
+  minWidth: 140,
+},
+slotTimeLabel: {
+  fontSize: 12,
+  fontWeight: '800',
+  color: muted,
+  marginBottom: 6,
+},
+  dangerBtnText: {
+    color: '#BE123C',
+    fontWeight: '700',
+  },
+      calendarDangerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: danger,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    calendarDangerBtnText: {
+      fontWeight: '800',
+      color: danger,
+      fontSize: 13,
+    },
+    timePickerModal: {
+  backgroundColor: surface,
+  padding: 24,
+  borderRadius: 24,
+  width: 360,
+  maxWidth: '92%',
+  maxHeight: '75%',
+  borderWidth: 1,
+  borderColor: border,
+  ...Platform.select({
+    web: { boxShadow: '0 10px 25px rgba(0,0,0,0.1)' } as any,
+  }),
+},
+timePickerList: {
+  width: '100%',
+  marginTop: 4,
+},
+timePickerItem: {
+  paddingVertical: 12,
+  paddingHorizontal: 14,
+  borderRadius: 12,
+  marginBottom: 8,
+  backgroundColor: bg,
+  borderWidth: 1,
+  borderColor: border,
+},
+timePickerItemActive: {
+  backgroundColor: primary,
+  borderColor: primary,
+},
+timePickerItemText: {
+  fontSize: 14,
+  fontWeight: '800',
+  color: text,
+},
+timePickerItemTextActive: {
+  color: surface2,
+},
+slotTimeInput: {
+  backgroundColor: bg,
+  borderWidth: 1,
+  borderColor: border,
+  borderRadius: 12,
+  paddingHorizontal: 12,
+  paddingVertical: 12,
+  minHeight: 48,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+},
+slotTimeInputText: {
+  fontSize: 14,
+  fontWeight: '800',
+  color: text,
+},
   });
 }

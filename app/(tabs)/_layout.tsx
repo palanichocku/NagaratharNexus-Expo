@@ -24,6 +24,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { label: 'Search', href: '/search', icon: 'search-outline' },
+  { label: 'Moderator', href: '/moderator-chat', icon: 'calendar-outline' },
   { label: 'Favorites', href: '/favorites', icon: 'heart-outline' },
   { label: 'Profile', href: '/profile', icon: 'person-circle-outline' },
   { label: 'News', href: '/news', icon: 'megaphone-outline' },
@@ -107,6 +108,7 @@ export default function TabLayout() {
           }}
         >
           <Tabs.Screen name="search" options={{ href: '/search' }} />
+          <Tabs.Screen name="moderator-chat" options={{ href: '/moderator-chat' }} />
           <Tabs.Screen name="favorites" options={{ href: '/favorites' }} />
           <Tabs.Screen name="profile" options={{ href: '/profile' }} />
           <Tabs.Screen name="news" options={{ href: '/news' }} />
@@ -132,6 +134,16 @@ export default function TabLayout() {
           href: '/(tabs)/search',
           title: 'Search',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="magnifyingglass" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="moderator-chat"
+        options={{
+          href: '/(tabs)/moderator-chat',
+          title: 'Moderator',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="calendar-outline" size={24} color={color} />
+          ),
         }}
       />
       <Tabs.Screen

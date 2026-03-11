@@ -109,7 +109,7 @@ export default function AboutScreen() {
 
           <View style={styles.profileContent}>
             <Text style={styles.profileRole}>Founder Moderator</Text>
-            <Text style={styles.profileName}>Coming Soon</Text>
+            <Text style={styles.profileName}>Valli Vellayyan</Text>
 
             <Text style={styles.bodyLast}>
               This section is reserved to recognise the leadership and community
