@@ -1,5 +1,3 @@
-// src/components/ExpectationsQuestionnaire.tsx
-
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
@@ -13,14 +11,94 @@ import { EXPECTATIONS_QUESTIONS } from '@/src/constants/expectationsQuestions';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseAnswers(raw: string): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  } catch {
-    return { q1: raw };
+function parseLegacyQuestionnaireText(raw: string): Record<string, string> {
+  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return {};
+
+  const result: Record<string, string> = {};
+
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let currentId: string | null = null;
+  let currentAnswerLines: string[] = [];
+
+  const flush = () => {
+    if (!currentId) return;
+    const answer = currentAnswerLines.join(' ').trim();
+    if (answer) {
+      result[currentId] = answer;
+    }
+    currentAnswerLines = [];
+  };
+
+  for (const line of lines) {
+    const qMatch = line.match(/^Q\s*(\d+)\s*[\.\):\-]/i);
+    if (qMatch) {
+      flush();
+      const qNum = Number(qMatch[1]);
+      currentId = `q${qNum}`;
+      continue;
+    }
+
+    const aMatch = line.match(/^A\s*[\.\):\-]\s*(.*)$/i);
+    if (aMatch) {
+      if (currentId) {
+        const first = String(aMatch[1] || '').trim();
+        if (first) currentAnswerLines.push(first);
+      }
+      continue;
+    }
+
+    if (/^Partner Expectations Questionnaire$/i.test(line)) {
+      continue;
+    }
+
+    if (currentId) {
+      currentAnswerLines.push(line);
+    }
   }
+
+  flush();
+  return result;
+}
+
+function parseAnswers(raw: any): Record<string, string> {
+  if (!raw) return {};
+
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    const out: Record<string, string> = {};
+    Object.keys(raw).forEach((k) => {
+      out[k] = String(raw[k] ?? '');
+    });
+    return out;
+  }
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return {};
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const out: Record<string, string> = {};
+        Object.keys(parsed).forEach((k) => {
+          out[k] = String(parsed[k] ?? '');
+        });
+        return out;
+      }
+    } catch {
+      const legacy = parseLegacyQuestionnaireText(trimmed);
+      if (Object.keys(legacy).length > 0) {
+        return legacy;
+      }
+
+      return { q1: trimmed };
+    }
+  }
+
   return {};
 }
 
@@ -31,18 +109,26 @@ function serializeAnswers(answers: Record<string, string>): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 interface Props {
-  value: string;
+  value: any;
   onChange: (v: string) => void;
   theme: any;
   styles?: any;
 }
 
 export function ExpectationsQuestionnaire({ value, onChange, theme }: Props) {
-  const [current, setCurrent] = useState(0);
   const answers = useMemo(() => parseAnswers(value), [value]);
-
   const total = EXPECTATIONS_QUESTIONS.length;
-  const answered = Object.values(answers).filter((a) => a.trim()).length;
+
+  const initialIndex = useMemo(() => {
+    const firstUnanswered = EXPECTATIONS_QUESTIONS.findIndex(
+      (q) => !String(answers[q.id] ?? '').trim(),
+    );
+    return firstUnanswered >= 0 ? firstUnanswered : 0;
+  }, [answers]);
+
+  const [current, setCurrent] = useState(initialIndex);
+
+  const answered = Object.values(answers).filter((a) => String(a ?? '').trim()).length;
 
   const handleChange = useCallback(
     (text: string) => {
@@ -58,8 +144,20 @@ export function ExpectationsQuestionnaire({ value, onChange, theme }: Props) {
 
   const s = useMemo(() => makeQStyles(theme), [theme]);
   const q = EXPECTATIONS_QUESTIONS[current];
-  const currentAnswer = answers[q.id] || '';
+  const currentAnswer = String(answers[q.id] ?? '');
   const progressPct = ((current + 1) / total) * 100;
+
+  const summaryItems = useMemo(
+    () =>
+      EXPECTATIONS_QUESTIONS
+        .map((qs, idx) => ({
+          ...qs,
+          idx,
+          answer: String(answers[qs.id] ?? '').trim(),
+        }))
+        .filter((item) => item.answer.length > 0 && item.idx !== current),
+    [answers, current],
+  );
 
   return (
     <View style={s.wrapper}>
@@ -72,7 +170,7 @@ export function ExpectationsQuestionnaire({ value, onChange, theme }: Props) {
 
       <View style={s.dotsRow}>
         {EXPECTATIONS_QUESTIONS.map((_, i) => {
-          const isAnswered = !!(answers[EXPECTATIONS_QUESTIONS[i].id]?.trim());
+          const isAnswered = !!String(answers[EXPECTATIONS_QUESTIONS[i].id] ?? '').trim();
           const isActive = i === current;
           return (
             <TouchableOpacity
@@ -136,7 +234,9 @@ export function ExpectationsQuestionnaire({ value, onChange, theme }: Props) {
           <Text style={[s.navText, current === 0 && s.navTextDisabled]}>Prev</Text>
         </TouchableOpacity>
 
-        <Text style={s.navCounter}>{current + 1} / {total}</Text>
+        <Text style={s.navCounter}>
+          {current + 1} / {total}
+        </Text>
 
         <TouchableOpacity
           onPress={goNext}
@@ -153,32 +253,30 @@ export function ExpectationsQuestionnaire({ value, onChange, theme }: Props) {
         </TouchableOpacity>
       </View>
 
-      {answered > 0 && (
+      {summaryItems.length > 0 && (
         <View style={s.summaryBox}>
           <Text style={s.summaryTitle}>Your answers so far</Text>
-          {EXPECTATIONS_QUESTIONS.map((qs) => {
-            const ans = answers[qs.id];
-            if (!ans?.trim()) return null;
-            return (
-              <TouchableOpacity
-                key={qs.id}
-                onPress={() =>
-                  setCurrent(EXPECTATIONS_QUESTIONS.findIndex((x) => x.id === qs.id))
-                }
-                activeOpacity={0.85}
-                style={s.summaryRow}
-              >
-                <View style={s.summaryDot} />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.summaryQ} numberOfLines={1}>
-                    {qs.shortLabel} • {qs.q}
-                  </Text>
-                  <Text style={s.summaryA} numberOfLines={2}>{ans}</Text>
-                </View>
-                <Ionicons name="pencil-outline" size={13} color={theme.colors.mutedText} />
-              </TouchableOpacity>
-            );
-          })}
+          {summaryItems.map((qs) => (
+            <TouchableOpacity
+              key={qs.id}
+              onPress={() =>
+                setCurrent(EXPECTATIONS_QUESTIONS.findIndex((x) => x.id === qs.id))
+              }
+              activeOpacity={0.85}
+              style={s.summaryRow}
+            >
+              <View style={s.summaryDot} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.summaryQ} numberOfLines={1}>
+                  {qs.shortLabel} • {qs.q}
+                </Text>
+                <Text style={s.summaryA} numberOfLines={2}>
+                  {qs.answer}
+                </Text>
+              </View>
+              <Ionicons name="pencil-outline" size={13} color={theme.colors.mutedText} />
+            </TouchableOpacity>
+          ))}
         </View>
       )}
     </View>

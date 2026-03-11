@@ -1,4 +1,3 @@
-// ./src/components/ProfileDisplay.tsx
 import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
@@ -8,12 +7,15 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+
 import { supabase } from '../lib/supabase';
 import { PROFILE_SCHEMA, type ProfileFieldSchema } from '../constants/profileSchema';
+import { PROFESSION_DATA } from '../constants/appData';
+import { EXPECTATIONS_QUESTIONS, EXPECTATIONS_QUESTION_MAP } from '../constants/expectationsQuestions';
 
 import {
   EducationEditor,
@@ -27,9 +29,11 @@ import {
   PROFILE_FIELD_OPTIONS,
   SiblingsEditor,
 } from '../profileForm/profileFormKit';
-import { router } from 'expo-router';
+
 import SignOutButton from '@/src/components/SignOutButton';
-import { EXPECTATIONS_QUESTIONS, EXPECTATIONS_QUESTION_MAP } from '../constants/expectationsQuestions';
+import SuggestionInput from '@/src/components/form/SuggestionInput';
+import { ExpectationsQuestionnaire } from '@/src/components/ExpectationsQuestionnaire';
+import { useDialog } from '@/src/ui/feedback/useDialog';
 
 function computeAge(dob: string | null | undefined): number | null {
   if (!dob || typeof dob !== 'string') return null;
@@ -82,6 +86,7 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
   const [currentUserRole, setCurrentUserRole] = useState<string>('USER');
+  const dialog = useDialog();
 
   useEffect(() => {
     let isMounted = true;
@@ -139,10 +144,11 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
         window.location.assign('/login');
       }
     } catch (e: any) {
-      const msg = e?.message || 'Please try again.';
-      Platform.OS === 'web'
-        ? alert(`Sign out failed: ${msg}`)
-        : Alert.alert('Sign out failed', msg);
+      dialog.show({
+        title: 'Sign out failed',
+        message: e?.message || 'Please try again.',
+        tone: 'error',
+      });
     }
   };
 
@@ -210,11 +216,13 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
     interests: Array.isArray(profile.interests)
       ? profile.interests
       : typeof profile.interests === 'string'
-        ? profile.interests.split(',').map((s: string) => s.trim()).filter(Boolean)
+        ? profile.interests
+            .split(',')
+            .map((s: string) => s.trim())
+            .filter(Boolean)
         : [],
 
     expectations: profile.expectations ?? '',
-
     profilePhotoUrl: profile.profilePhotoUrl ?? profile.profile_photo_url ?? '',
   };
 
@@ -243,78 +251,79 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
       setEditingSection(null);
       return;
     }
+
     setIsSaving(true);
     try {
       await onSaveSection(tempData);
       setEditingSection(null);
     } catch (e: any) {
-      Alert.alert('Save Error', e.message);
+      dialog.show({
+        title: 'Save error',
+        message: e?.message || 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setIsSaving(false);
     }
   };
 
-const renderExpectationsView = (val: any) => {
-  const parsed = parseExpectationsPayload(val);
+  const renderExpectationsView = (val: any) => {
+    const parsed = parseExpectationsPayload(val);
 
-  if (!parsed) {
+    if (!parsed) {
+      return <Text style={[styles.fieldValue, styles.longText]}>{val || 'N/A'}</Text>;
+    }
+
+    const answeredItems = EXPECTATIONS_QUESTIONS
+      .map((item) => {
+        const answer = String(parsed[item.id] ?? '').trim();
+        return {
+          ...item,
+          answer,
+        };
+      })
+      .filter((item) => item.answer.length > 0);
+
+    if (!answeredItems.length) {
+      return <Text style={styles.emptyValue}>None listed</Text>;
+    }
+
     return (
-      <Text style={[styles.fieldValue, styles.longText]}>
-        {val || 'N/A'}
-      </Text>
-    );
-  }
-
-  const answeredItems = EXPECTATIONS_QUESTIONS
-    .map((item) => {
-      const answer = String(parsed[item.id] ?? '').trim();
-      return {
-        ...item,
-        answer,
-      };
-    })
-    .filter((item) => item.answer.length > 0);
-
-  if (!answeredItems.length) {
-    return <Text style={styles.emptyValue}>None listed</Text>;
-  }
-
-  return (
-    <View style={styles.expectationsList}>
-      {answeredItems.map((item) => (
-        <View key={item.id} style={styles.expectationCard}>
-          <View style={styles.expectationTopRow}>
-            <View style={styles.expectationBadge}>
-              <Text style={styles.expectationBadgeText}>{item.shortLabel}</Text>
-            </View>
-            <Text style={styles.expectationQuestion}>{item.q}</Text>
-          </View>
-
-          <View style={styles.expectationAnswerWrap}>
-            <Text style={styles.expectationAnswer}>{item.answer}</Text>
-          </View>
-        </View>
-      ))}
-
-      {Object.keys(parsed)
-        .filter((key) => !EXPECTATIONS_QUESTION_MAP[key] && String(parsed[key] ?? '').trim())
-        .map((key) => (
-          <View key={key} style={styles.expectationCard}>
+      <View style={styles.expectationsList}>
+        {answeredItems.map((item) => (
+          <View key={item.id} style={styles.expectationCard}>
             <View style={styles.expectationTopRow}>
               <View style={styles.expectationBadge}>
-                <Text style={styles.expectationBadgeText}>{key.toUpperCase()}</Text>
+                <Text style={styles.expectationBadgeText}>{item.shortLabel}</Text>
               </View>
-              <Text style={styles.expectationQuestion}>Additional response</Text>
+              <Text style={styles.expectationQuestion}>{item.q}</Text>
             </View>
 
             <View style={styles.expectationAnswerWrap}>
-              <Text style={styles.expectationAnswer}>{String(parsed[key] ?? '')}</Text>
+              <Text style={styles.expectationAnswer}>{item.answer}</Text>
             </View>
           </View>
         ))}
-    </View>
-  );
-};
+
+        {Object.keys(parsed)
+          .filter((key) => !EXPECTATIONS_QUESTION_MAP[key] && String(parsed[key] ?? '').trim())
+          .map((key) => (
+            <View key={key} style={styles.expectationCard}>
+              <View style={styles.expectationTopRow}>
+                <View style={styles.expectationBadge}>
+                  <Text style={styles.expectationBadgeText}>{key.toUpperCase()}</Text>
+                </View>
+                <Text style={styles.expectationQuestion}>Additional response</Text>
+              </View>
+
+              <View style={styles.expectationAnswerWrap}>
+                <Text style={styles.expectationAnswer}>{String(parsed[key] ?? '')}</Text>
+              </View>
+            </View>
+          ))}
+      </View>
+    );
+  };
 
   const renderViewValue = (field: ProfileFieldSchema, val: any) => {
     if (!canViewPrivateContact && field.key === 'phone' && displayProfile.hidePhone) {
@@ -335,9 +344,7 @@ const renderExpectationsView = (val: any) => {
             {dobStr || 'N/A'}
             {age !== null ? ` (${age})` : ''}
           </Text>
-          {age !== null ? (
-            <Text style={styles.ageSubText}>{age} years old</Text>
-          ) : null}
+          {age !== null ? <Text style={styles.ageSubText}>{age} years old</Text> : null}
         </View>
       );
     }
@@ -345,6 +352,7 @@ const renderExpectationsView = (val: any) => {
     if (field.type === 'education_history') {
       const arr = Array.isArray(val) ? val : [];
       if (!arr.length) return <Text style={styles.emptyValue}>None listed</Text>;
+
       return (
         <>
           {arr.map((edu: any, i: number) => (
@@ -361,6 +369,7 @@ const renderExpectationsView = (val: any) => {
     if (field.type === 'siblings_list') {
       const arr = Array.isArray(val) ? val : [];
       if (!arr.length) return <Text style={styles.emptyValue}>None listed</Text>;
+
       return (
         <>
           {arr.map((sib: any, i: number) => (
@@ -415,6 +424,16 @@ const renderExpectationsView = (val: any) => {
       );
     }
 
+    if (field.key === 'expectations') {
+      return (
+        <ExpectationsQuestionnaire
+          value={tempData.expectations}
+          onChange={(v) => setTempData({ ...tempData, expectations: v })}
+          theme={theme}
+        />
+      );
+    }
+
     if (field.type === 'country') {
       return (
         <FormSelect
@@ -435,6 +454,7 @@ const renderExpectationsView = (val: any) => {
 
     if (field.type === 'state') {
       const states = getStateOptions(tempData.residentCountry || displayProfile.residentCountry);
+
       if (!states.length) {
         return (
           <FormTextInput
@@ -445,6 +465,7 @@ const renderExpectationsView = (val: any) => {
           />
         );
       }
+
       return (
         <FormSelect
           value={tempData[key] || ''}
@@ -499,6 +520,18 @@ const renderExpectationsView = (val: any) => {
       );
     }
 
+    if (key === 'profession') {
+      return (
+        <SuggestionInput
+          value={String(tempData.profession ?? '')}
+          placeholder="Type your profession or pick a suggestion"
+          suggestions={PROFESSION_DATA}
+          theme={theme}
+          onChange={(v) => setTempData({ ...tempData, profession: v })}
+        />
+      );
+    }
+
     if (field.type === 'select') {
       if (key === 'citizenship') {
         return (
@@ -515,21 +548,24 @@ const renderExpectationsView = (val: any) => {
       if (key === 'pirivu') {
         const kovil = tempData.kovil || displayProfile.kovil;
         const pirivuOptions = getPirivuOptions(kovil);
+
         if (!pirivuOptions.length) {
           if (tempData.pirivu) {
             setTimeout(() => {
               setTempData((prev: any) => ({ ...prev, pirivu: '' }));
             }, 0);
           }
+
           return (
             <FormTextInput
-              value={''}
+              value=""
               placeholder="Not applicable"
               onChange={() => null}
               theme={theme}
             />
           );
         }
+
         return (
           <FormSelect
             value={tempData.pirivu || ''}
@@ -552,6 +588,7 @@ const renderExpectationsView = (val: any) => {
               const pirivuOptions = getPirivuOptions(v);
               const currentPirivu = tempData.pirivu || '';
               const stillValid = pirivuOptions.some((p) => p.value === currentPirivu);
+
               setTempData({
                 ...tempData,
                 kovil: v,
@@ -593,16 +630,20 @@ const renderExpectationsView = (val: any) => {
           style={styles.heroPhoto}
         />
         {canEditProfile && (
-          <SignOutButton
-            variant="row"
-            label="SIGN OUT"
-            style={styles.signOutBtn}
-          />
+          <SignOutButton variant="row" label="SIGN OUT" style={styles.signOutBtn} />
         )}
       </View>
 
       {!isSelf && (displayProfile.hidePhone || displayProfile.hideEmail) ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 25, paddingTop: 12 }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            paddingHorizontal: 25,
+            paddingTop: 12,
+          }}
+        >
           <Ionicons name="lock-closed-outline" size={14} color="#6B7280" />
           <Text style={styles.privateValue}>Contact info is private</Text>
         </View>
@@ -610,8 +651,12 @@ const renderExpectationsView = (val: any) => {
 
       {PROFILE_SCHEMA.map((group) => {
         const isEditingThis = editingSection === group.section;
+
         return (
-          <View key={group.section} style={[styles.section, isEditingThis && styles.sectionEditing]}>
+          <View
+            key={group.section}
+            style={[styles.section, isEditingThis && styles.sectionEditing]}
+          >
             <View style={styles.sectionHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Ionicons name={group.icon as any} size={14} color="#111827" />
@@ -628,10 +673,19 @@ const renderExpectationsView = (val: any) => {
 
                   {isEditingThis && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <TouchableOpacity onPress={handleCancel} disabled={isSaving} style={{ padding: 6 }}>
+                      <TouchableOpacity
+                        onPress={handleCancel}
+                        disabled={isSaving}
+                        style={{ padding: 6 }}
+                      >
                         <Ionicons name="close" size={18} color="#FF3B30" />
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={handleSave} disabled={isSaving} style={{ padding: 6 }}>
+
+                      <TouchableOpacity
+                        onPress={handleSave}
+                        disabled={isSaving}
+                        style={{ padding: 6 }}
+                      >
                         {isSaving ? (
                           <ActivityIndicator size="small" />
                         ) : (
@@ -657,7 +711,10 @@ const renderExpectationsView = (val: any) => {
                   const value = (displayProfile as any)[field.key];
 
                   return (
-                    <View key={field.key} style={fullWidth ? styles.fullWidthItem : styles.gridItem}>
+                    <View
+                      key={field.key}
+                      style={fullWidth ? styles.fullWidthItem : styles.gridItem}
+                    >
                       <Text style={styles.fieldLabel}>{field.label}</Text>
                       {isEditingThis ? renderEditField(field) : renderViewValue(field, value)}
                     </View>
@@ -698,7 +755,6 @@ const styles = StyleSheet.create({
     gap: 5,
     zIndex: 1000,
   },
-  signOutText: { color: '#FF3B30', fontWeight: '800', fontSize: 13 },
 
   section: { padding: 25, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' },
   sectionEditing: { backgroundColor: '#F9FAFB' },
@@ -709,6 +765,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
+
   sectionTitle: {
     fontSize: 11,
     fontWeight: '800',
@@ -740,8 +797,19 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 4,
   },
-  fieldValue: { fontSize: 15, fontWeight: '600', color: '#1C1C1E', marginBottom: 4 },
-  emptyValue: { fontSize: 14, fontStyle: 'italic', color: '#8E8E93' },
+
+  fieldValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    marginBottom: 4,
+  },
+
+  emptyValue: {
+    fontSize: 14,
+    fontStyle: 'italic',
+    color: '#8E8E93',
+  },
 
   readonlyBox: {
     backgroundColor: '#F3F4F6',
@@ -750,7 +818,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 10,
   },
-  readonlyText: { fontSize: 14, fontWeight: '700', color: '#111827' },
+
+  readonlyText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
 
   longText: {
     width: '100%',

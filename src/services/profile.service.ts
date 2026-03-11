@@ -1,4 +1,3 @@
-// ./src/services/profile.service.ts
 import { supabase } from '../../src/lib/supabase';
 
 type AnyRecord = Record<string, any>;
@@ -6,62 +5,88 @@ type AnyRecord = Record<string, any>;
 /**
  * Minimal, safe key mapper.
  * - Only maps known camelCase keys to existing snake_case columns.
- * - Leaves unknown keys as-is (so we don't break other updates).
+ * - Leaves unknown keys as-is.
  */
 function normalizeProfileUpdates(input: AnyRecord): AnyRecord {
-  const updates: AnyRecord = { ...(input || {}) };
+  const src: AnyRecord = input || {};
+  const out: AnyRecord = {};
 
-  // ✅ Common camelCase -> snake_case mappings used across UI
-  const MAP: Record<string, string> = {
-    fullName: 'full_name',
-    phoneNumber: 'phone', // only if your UI ever uses phoneNumber
-    residentCountry: 'resident_country',
-    residentStatus: 'resident_status',
-    currentState: 'current_state', // ✅ FIX for your current error
-    nativePlace: 'native_place',
-    maritalStatus: 'marital_status',
-    fatherName: 'father_name',
-    fatherWork: 'father_work',
-    fatherPhone: 'father_phone',
-    motherName: 'mother_name',
-    motherWork: 'mother_work',
-    motherPhone: 'mother_phone',
-    familyInitials: 'family_initials',
-    linkedInProfile: 'linkedin_profile',
-    profilePhotoUrl: 'profile_photo_url',
-
-    hidePhone: 'hide_phone',
-    hideEmail: 'hide_email',
-    accountStatus: 'account_status',
-
-    updatedAt: 'updated_at',
-    createdAt: 'created_at',
+  const assign = (dbKey: string, ...candidates: string[]) => {
+    for (const key of candidates) {
+      if (Object.prototype.hasOwnProperty.call(src, key) && src[key] !== undefined) {
+        out[dbKey] = src[key];
+        return;
+      }
+    }
   };
 
-  Object.keys(MAP).forEach((fromKey) => {
-    if (Object.prototype.hasOwnProperty.call(updates, fromKey)) {
-      const toKey = MAP[fromKey];
-      // move value to snake_case key
-      updates[toKey] = updates[fromKey];
-      delete updates[fromKey];
-    }
-  });
+  assign('full_name', 'fullName', 'full_name');
+  assign('dob', 'dob');
+  assign('gender', 'gender');
+  assign('citizenship', 'citizenship');
 
-  // Avoid accidentally writing undefined (PostgREST may reject in some cases)
-  Object.keys(updates).forEach((k) => {
-    if (updates[k] === undefined) delete updates[k];
-  });
+  assign('resident_country', 'residentCountry', 'resident_country');
+  assign('resident_status', 'residentStatus', 'resident_status');
+  assign('current_state', 'currentState', 'current_state');
+  assign('current_city', 'currentCity', 'current_city');
 
-  return updates;
+  assign('phone', 'phone', 'phoneNumber');
+  assign('email', 'email');
+  assign('hide_phone', 'hidePhone', 'hide_phone');
+  assign('hide_email', 'hideEmail', 'hide_email');
+
+  assign('marital_status', 'maritalStatus', 'marital_status');
+  assign('height', 'height');
+
+  assign('profession', 'profession');
+  assign('workplace', 'workplace');
+  assign('linkedin_profile', 'linkedinProfile', 'linkedInProfile', 'linkedin_profile');
+
+  assign('native_place', 'nativePlace', 'native_place');
+  assign('family_initials', 'familyInitials', 'family_initials');
+
+  assign('father_name', 'fatherName', 'father_name');
+  assign('father_work', 'fatherWork', 'father_work');
+  assign('father_phone', 'fatherPhone', 'father_phone');
+
+  assign('mother_name', 'motherName', 'mother_name');
+  assign('mother_work', 'motherWork', 'mother_work');
+  assign('mother_phone', 'motherPhone', 'mother_phone');
+
+  assign('education_history', 'educationHistory', 'education_history');
+
+  assign('kovil', 'kovil');
+  assign('pirivu', 'pirivu');
+  assign('rasi', 'rasi');
+  assign('star', 'star');
+
+  assign('interests', 'interests');
+  assign('expectations', 'expectations');
+
+  assign('profile_photo_url', 'profilePhotoUrl', 'profile_photo_url');
+
+  if (Object.prototype.hasOwnProperty.call(src, 'siblings')) {
+    out.family_details = {
+      siblings: Array.isArray(src.siblings) ? src.siblings : [],
+    };
+  } else if (
+    Object.prototype.hasOwnProperty.call(src, 'family_details') &&
+    src.family_details &&
+    typeof src.family_details === 'object'
+  ) {
+    out.family_details = src.family_details;
+  }
+
+  return out;
 }
 
 export const profileService = {
-  /**
-   * 👤 Fetches the current authenticated user's profile from Supabase.
-   */
   async getProfile() {
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
 
       if (authError || !user) {
         console.warn('⭐ [PROFILE_SERVICE]: No active session found.');
@@ -87,13 +112,12 @@ export const profileService = {
     }
   },
 
-  /**
-   * 📝 Updates specific fields in the profile.
-   * Accepts camelCase OR snake_case. Always writes snake_case to Supabase.
-   */
   async updateProfile(updates: any) {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       if (!user) throw new Error('No authenticated user.');
 
       const normalized = normalizeProfileUpdates(updates || {});

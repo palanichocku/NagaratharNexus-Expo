@@ -1,1 +1,1 @@
-export { default } from './settings/SettingsScreen.tsx';
+export { default } from './settings/SettingsScreen';

@@ -15,8 +15,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/src/lib/supabase';
 import { useRouter } from 'expo-router';
 import { useAppTheme } from '@/src/theme/ThemeProvider';
-import { useSignOut } from '@/src/features/auth/useSignOut';
 import SignOutButton from '@/src/components/SignOutButton';
+
+type SettingField = 'hide_phone' | 'hide_email' | 'account_status';
 
 export default function SettingsScreen() {
   const { theme, themeName, setThemeName, availableThemes } = useAppTheme();
@@ -26,147 +27,210 @@ export default function SettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [hidePhone, setHidePhone] = useState(true);
   const [hideEmail, setHideEmail] = useState(true);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [isProfileActive, setIsProfileActive] = useState(true);
+  const [savingKey, setSavingKey] = useState<SettingField | null>(null);
 
   useEffect(() => {
     loadSettings();
   }, []);
 
   const loadSettings = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    const { data } = await supabase
-      .from('profiles')
-      .select('hide_phone, hide_email')
-      .eq('id', user.id)
-      .single();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
 
-    if (data) {
-      setHidePhone(!!data.hide_phone);
-      setHideEmail(!!data.hide_email);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('hide_phone, hide_email, account_status')
+        .eq('id', user.id)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setHidePhone(!!data.hide_phone);
+        setHideEmail(!!data.hide_email);
+        setIsProfileActive((data.account_status ?? 'ACTIVE') === 'ACTIVE');
+      }
+    } catch (e: any) {
+      Alert.alert('Unable to load settings', e?.message ?? 'Please try again.');
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
-  const updateSetting = async (field: 'hide_phone' | 'hide_email', value: boolean) => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
+  const updateBooleanSetting = async (field: 'hide_phone' | 'hide_email', value: boolean) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  setSavingKey(field);
+    if (!user) return;
 
-  const prev = field === 'hide_phone' ? hidePhone : hideEmail;
+    setSavingKey(field);
 
-  try {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ [field]: value })
-      .eq('id', user.id);
+    const prev = field === 'hide_phone' ? hidePhone : hideEmail;
 
-    if (error) throw error;
-  } catch (e: any) {
-    // rollback UI
-    if (field === 'hide_phone') setHidePhone(prev);
-    else setHideEmail(prev);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ [field]: value })
+        .eq('id', user.id);
 
-    Alert.alert('Update failed', e?.message ?? 'Please try again.');
-  } finally {
-    setSavingKey(null);
-  }
-};
+      if (error) throw error;
+    } catch (e: any) {
+      if (field === 'hide_phone') setHidePhone(prev);
+      else setHideEmail(prev);
 
-const { signOut, isSigningOut } = useSignOut({
-  redirectTo: '/login',
-});
+      Alert.alert('Update failed', e?.message ?? 'Please try again.');
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
-const handleDeactivate = async () => {
-  Alert.alert(
-    'Make Account Inactive',
-    'Your profile will no longer appear in search. Continue?',
-    [
+  const updateAccountStatus = async (nextActive: boolean) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const nextStatus = nextActive ? 'ACTIVE' : 'INACTIVE';
+    const prev = isProfileActive;
+
+    setIsProfileActive(nextActive);
+    setSavingKey('account_status');
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ account_status: nextStatus })
+        .eq('id', user.id);
+
+      if (error) throw error;
+    } catch (e: any) {
+      setIsProfileActive(prev);
+      Alert.alert('Update failed', e?.message ?? 'Please try again.');
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const handleToggleProfileActive = (value: boolean) => {
+    const title = value ? 'Make profile active?' : 'Make profile inactive?';
+    const message = value
+      ? 'Your profile will appear in search and match discovery again.'
+      : 'Your profile will be hidden from search and match discovery until you turn it back on.';
+
+    Alert.alert(title, message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Confirm',
-        style: 'destructive',
-        onPress: async () => {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) return;
-
-          await supabase
-            .from('profiles')
-            .update({ account_status: 'INACTIVE' })
-            .eq('id', user.id);
-
-          await supabase.auth.signOut();
-          router.replace('/(auth)/login');
-        },
+        onPress: () => updateAccountStatus(value),
       },
-    ],
-  );
-};
+    ]);
+  };
 
-if (loading) {
-  return (
-    <View style={styles.center}>
-      <ActivityIndicator size="large" color={theme.colors.primary} />
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
+
+  const tint = (theme.colors as any).tint ?? theme.colors.primary;
+
+  const ThemePicker = () => (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Appearance</Text>
+
+      <View style={styles.row}>
+        <View style={styles.rowLeft}>
+          <View style={[styles.iconPill, { backgroundColor: `${tint}18` }]}>
+            <Ionicons name="color-palette-outline" size={16} color={tint} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>Theme</Text>
+            <Text style={styles.rowSub}>
+              Choose Warm or Cool. Your choice overrides the global default on this device.
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.themeChipRow}>
+        {availableThemes.map((t) => {
+          const active = t === themeName;
+          return (
+            <TouchableOpacity
+              key={t}
+              accessibilityRole="button"
+              onPress={() => setThemeName(t)}
+              activeOpacity={0.9}
+              style={[styles.themeChip, active ? styles.themeChipActive : styles.themeChipIdle]}
+            >
+              <Text
+                style={[
+                  styles.themeChipText,
+                  active ? styles.themeChipTextActive : styles.themeChipTextIdle,
+                ]}
+              >
+                {String(t).toUpperCase()}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
-}
 
-const tint = (theme.colors as any).tint ?? theme.colors.primary;
-
-const ThemePicker = () => (
-  <View style={styles.card}>
-    <Text style={styles.cardTitle}>Appearance</Text>
-
-    <View style={styles.row}>
+  const SettingsNavRow = ({
+    icon,
+    title,
+    subtitle,
+    onPress,
+  }: {
+    icon: keyof typeof Ionicons.glyphMap;
+    title: string;
+    subtitle: string;
+    onPress: () => void;
+  }) => (
+    <TouchableOpacity style={styles.rowPressable} onPress={onPress} activeOpacity={0.9}>
       <View style={styles.rowLeft}>
         <View style={[styles.iconPill, { backgroundColor: `${tint}18` }]}>
-          <Ionicons name="color-palette-outline" size={16} color={tint} />
+          <Ionicons name={icon} size={16} color={tint} />
         </View>
         <View style={styles.rowText}>
-          <Text style={styles.rowTitle}>Theme</Text>
-          <Text style={styles.rowSub}>
-            Choose Warm or Cool. Your choice overrides the global default on this device.
-          </Text>
+          <Text style={styles.rowTitle}>{title}</Text>
+          <Text style={styles.rowSub}>{subtitle}</Text>
         </View>
       </View>
-    </View>
 
-    <View style={styles.themeChipRow}>
-      {availableThemes.map((t) => {
-        const active = t === themeName;
-        return (
-          <TouchableOpacity
-            key={t}
-            accessibilityRole="button"
-            onPress={() => setThemeName(t)}
-            activeOpacity={0.9}
-            style={[styles.themeChip, active ? styles.themeChipActive : styles.themeChipIdle]}
-          >
-            <Text style={[styles.themeChipText, active ? styles.themeChipTextActive : styles.themeChipTextIdle]}>
-              {String(t).toUpperCase()}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  </View>
-);
+      <Ionicons name="chevron-forward" size={18} color={theme.colors.mutedText} />
+    </TouchableOpacity>
+  );
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.header}>
         <Text style={styles.title}>Settings</Text>
-        <Text style={styles.subtitle}>Privacy, theme, and account controls</Text>
+        <Text style={styles.subtitle}>Privacy, visibility, theme, and account controls</Text>
       </View>
 
-      {/* ✅ NEW: Theme override for user */}
       <ThemePicker />
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Privacy</Text>
+        <Text style={styles.cardTitle}>Privacy & Visibility</Text>
 
         <View style={styles.row}>
           <View style={styles.rowLeft}>
@@ -187,7 +251,7 @@ const ThemePicker = () => (
                 value={hidePhone}
                 onValueChange={(val) => {
                   setHidePhone(val);
-                  updateSetting('hide_phone', val);
+                  updateBooleanSetting('hide_phone', val);
                 }}
               />
             )}
@@ -215,8 +279,35 @@ const ThemePicker = () => (
                 value={hideEmail}
                 onValueChange={(val) => {
                   setHideEmail(val);
-                  updateSetting('hide_email', val);
+                  updateBooleanSetting('hide_email', val);
                 }}
+              />
+            )}
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.row}>
+          <View style={styles.rowLeft}>
+            <View style={[styles.iconPill, { backgroundColor: `${tint}18` }]}>
+              <Ionicons name="eye-outline" size={16} color={tint} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>Profile active</Text>
+              <Text style={styles.rowSub}>
+                When off, your profile is hidden from search and match discovery.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.rowRight}>
+            {savingKey === 'account_status' ? (
+              <ActivityIndicator size="small" color={tint} />
+            ) : (
+              <Switch
+                value={isProfileActive}
+                onValueChange={handleToggleProfileActive}
               />
             )}
           </View>
@@ -224,22 +315,37 @@ const ThemePicker = () => (
       </View>
 
       <View style={styles.card}>
+        <Text style={styles.cardTitle}>Help & Legal</Text>
+
+        <SettingsNavRow
+          icon="information-circle-outline"
+          title="About"
+          subtitle="Learn more about Nagarathar Nexus."
+          onPress={() => router.push('/about')}
+        />
+
+        <View style={styles.divider} />
+
+        <SettingsNavRow
+          icon="document-text-outline"
+          title="Terms & Conditions"
+          subtitle="Rules, responsibilities, and membership terms."
+          onPress={() => router.push('/legal/terms')}
+        />
+
+        <View style={styles.divider} />
+
+        <SettingsNavRow
+          icon="shield-checkmark-outline"
+          title="Privacy Policy"
+          subtitle="How your profile and personal data are handled."
+          onPress={() => router.push('/legal/privacy')}
+        />
+      </View>
+
+      <View style={styles.card}>
         <Text style={styles.cardTitle}>Account</Text>
-
         <SignOutButton variant="solid" label="SIGN OUT" />
-        
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.dangerBtn]}
-          onPress={handleDeactivate}
-          activeOpacity={0.9}
-        >
-          <Ionicons name="pause-circle-outline" size={18} color={theme.colors.danger} />
-          <Text style={[styles.actionText, { color: theme.colors.danger }]}>Make account inactive</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.helper}>
-          Inactive accounts are hidden from search. You can re-enable later (we’ll add this soon).
-        </Text>
       </View>
 
       {Platform.OS === 'web' ? <View style={{ height: 24 }} /> : null}
@@ -249,6 +355,7 @@ const ThemePicker = () => (
 
 function makeStyles(theme: any) {
   const r = theme.radius;
+
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.colors.bg },
     content: { padding: 22, paddingBottom: 34 },
@@ -275,8 +382,26 @@ function makeStyles(theme: any) {
       marginBottom: 10,
     },
 
-    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    rowLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+
+    rowPressable: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      minHeight: 52,
+    },
+
+    rowLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      gap: 12,
+    },
+
     rowText: { flex: 1 },
     rowTitle: { fontSize: 15, fontWeight: '800', color: theme.colors.text },
     rowSub: { marginTop: 2, fontSize: 12, fontWeight: '600', color: theme.colors.mutedText },
@@ -293,43 +418,40 @@ function makeStyles(theme: any) {
       backgroundColor: theme.colors.surface,
     },
 
-    divider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 14 },
+    divider: {
+      height: 1,
+      backgroundColor: theme.colors.border,
+      marginVertical: 14,
+    },
 
-    // ✅ Theme chips
-    themeChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 as any, marginTop: 12 },
-    themeChip: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1 },
-    themeChipIdle: { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
-    themeChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+    themeChipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10 as any,
+      marginTop: 12,
+    },
+    themeChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    themeChipIdle: {
+      backgroundColor: theme.colors.surface,
+      borderColor: theme.colors.border,
+    },
+    themeChipActive: {
+      backgroundColor: theme.colors.primary,
+      borderColor: theme.colors.primary,
+    },
     themeChipText: { fontSize: 12, fontWeight: '900' },
     themeChipTextIdle: { color: theme.colors.text },
     themeChipTextActive: { color: theme.colors.primaryText },
 
-    actionBtn: {
-      flexDirection: 'row',
+    center: {
+      flex: 1,
+      justifyContent: 'center',
       alignItems: 'center',
-      gap: 10,
-      paddingVertical: 12,
-      paddingHorizontal: 12,
-      borderRadius: r?.button ?? 14,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      marginTop: 10,
     },
-    dangerBtn: {
-      backgroundColor: theme.colors.bg,
-      borderColor: theme.colors.border,
-    },
-    actionText: { fontSize: 15, fontWeight: '800', color: theme.colors.text },
-
-    helper: {
-      marginTop: 12,
-      fontSize: 12,
-      fontWeight: '600',
-      color: theme.colors.mutedText,
-      lineHeight: 18,
-    },
-
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   });
 }

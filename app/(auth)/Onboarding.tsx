@@ -25,6 +25,8 @@ import { useDialog } from '@/src/ui/feedback/useDialog';
 import { useToast } from '@/src/ui/feedback/useToast';
 import { mapAuthError } from '@/src/features/auth/authMessageMapper';
 import StatusBanner from '@/src/components/ui/StatusBanner';
+import SignOutButton from '../../src/components/SignOutButton';
+import SuggestionInput from '@/src/components/form/SuggestionInput';
 
 import {
   GENDER_DATA,
@@ -42,7 +44,6 @@ import {
   OCCUPATION_DATA,
 } from '../../src/constants/appData';
 
-// --- CONFIG & CONSTANTS ---
 const TOTAL_STEPS = 8;
 const DRAFT_KEY = 'NN_ONBOARDING_DRAFT_V2';
 const SIB_MARITAL_DATA = [...MARITAL_STATUS_DATA, { label: 'Married', value: 'Married' }];
@@ -75,7 +76,9 @@ const INITIAL_FORM_DATA = {
   motherName: '',
   motherWork: '',
   motherPhone: '',
-  familyDetails: { siblings: [] as Array<{ name: string; maritalStatus: string; occupation: string }> },
+  familyDetails: {
+    siblings: [] as Array<{ name: string; maritalStatus: string; occupation: string }>,
+  },
 
   kovil: '',
   pirivu: '',
@@ -89,7 +92,7 @@ const INITIAL_FORM_DATA = {
 const STEP_META = [
   { title: 'Personal Details', helper: 'Let’s start with the basics — quick and easy.' },
   { title: 'Location & Residency', helper: 'Where you live helps matches connect better.' },
-  { title: 'Professional Profile', helper: 'A little work/education context goes a long way.' },
+  { title: 'Professional Profile', helper: 'A little work and education context goes a long way.' },
   { title: 'Cultural Identity', helper: 'Traditional details valued by many families.' },
   { title: 'Family Lineage', helper: 'Family details help create meaningful introductions.' },
   { title: 'Profile Photo', helper: 'A clear photo builds trust.' },
@@ -111,7 +114,6 @@ function isBlank(value: unknown) {
   return String(value ?? '').trim() === '';
 }
 
-// --- STABLE UI HELPERS ---
 const FormInput = ({
   styles,
   theme,
@@ -129,11 +131,7 @@ const FormInput = ({
   <View style={[styles.inputGroup, style]}>
     <Text style={styles.label}>
       {label}{' '}
-      {required ? (
-        <Text style={styles.reqStar}>*</Text>
-      ) : (
-        <Text style={styles.optTag}>(Optional)</Text>
-      )}
+      {required ? <Text style={styles.reqStar}>*</Text> : <Text style={styles.optTag}>(Optional)</Text>}
     </Text>
     <TextInput
       style={[
@@ -167,11 +165,7 @@ const FormDropdown = ({
   <View style={[styles.inputGroup, style]}>
     <Text style={styles.label}>
       {label}{' '}
-      {required ? (
-        <Text style={styles.reqStar}>*</Text>
-      ) : (
-        <Text style={styles.optTag}>(Optional)</Text>
-      )}
+      {required ? <Text style={styles.reqStar}>*</Text> : <Text style={styles.optTag}>(Optional)</Text>}
     </Text>
     <Dropdown
       style={[styles.dropdown, missing?.[k] && styles.inputError]}
@@ -218,7 +212,7 @@ export default function Onboarding() {
         color: theme.colors.text,
         outline: 'none',
       }) as any,
-    [radiusInput, theme.colors.border, theme.colors.inputBg, theme.colors.text]
+    [radiusInput, theme.colors.border, theme.colors.inputBg, theme.colors.text],
   );
 
   const [step, setStep] = useState(1);
@@ -233,7 +227,6 @@ export default function Onboarding() {
   const [statusMessage, setStatusMessage] = useState('');
   const [statusTone, setStatusTone] = useState<'info' | 'success' | 'error' | 'warning'>('info');
 
-  // Session guard
   useEffect(() => {
     let alive = true;
 
@@ -278,7 +271,6 @@ export default function Onboarding() {
     };
   }, [dialog, router]);
 
-  // Load draft
   useEffect(() => {
     let alive = true;
 
@@ -295,7 +287,6 @@ export default function Onboarding() {
           setDraftRestored(true);
           setStatusMessage('Your saved draft was restored on this device.');
           setStatusTone('info');
-          console.log('📦 Draft restored to Step:', parsed?.step || 1);
         }
       } catch (e) {
         console.error('Failed to load draft:', e);
@@ -311,7 +302,6 @@ export default function Onboarding() {
     };
   }, []);
 
-  // Hydrate auth email after ready
   useEffect(() => {
     if (!isReady) return;
 
@@ -344,7 +334,6 @@ export default function Onboarding() {
     };
   }, [isReady]);
 
-  // Persist draft
   useEffect(() => {
     if (!isReady) return;
 
@@ -360,7 +349,6 @@ export default function Onboarding() {
     void saveDraft();
   }, [step, formData, filterCodes, isReady]);
 
-  // Sync ISO codes
   useEffect(() => {
     const countryName = String(formData?.residentCountry || '');
     const stateName = String(formData?.currentState || '');
@@ -379,7 +367,6 @@ export default function Onboarding() {
     });
   }, [formData?.residentCountry, formData?.currentState]);
 
-  // Clear city if state cleared
   useEffect(() => {
     setFormData((prev: any) => {
       if (!prev?.currentState && prev?.currentCity) {
@@ -390,14 +377,13 @@ export default function Onboarding() {
   }, [filterCodes.country, filterCodes.state]);
 
   const selectedKovilObj = KOVIL_DATA.find(
-    (k: any) => k.value === formData.kovil || k.label === formData.kovil
+    (k: any) => k.value === formData.kovil || k.label === formData.kovil,
   );
   const hasPirivus = !!selectedKovilObj?.pirivus?.length;
 
   const handlePickImage = async () => {
-    console.log('📸 Image picker triggered...');
-
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
     if (status !== 'granted') {
       dialog.show({
         title: 'Permission needed',
@@ -444,7 +430,6 @@ export default function Onboarding() {
               setStatusMessage('Your draft has been cleared. You are back at Step 1.');
               setStatusTone('success');
               toast.show('Draft cleared successfully.', 'success');
-              console.log('🧹 State and Storage have been reset.');
             } catch (e) {
               console.error('Reset failed:', e);
               dialog.show({
@@ -460,8 +445,6 @@ export default function Onboarding() {
   };
 
   const uploadPhoto = async (asset: ImagePicker.ImagePickerAsset) => {
-    console.log('🚀 Step 6: Initializing upload...');
-
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -527,7 +510,7 @@ export default function Onboarding() {
       setStatusTone('success');
       toast.show('Photo attached successfully.', 'success');
     } catch (e: any) {
-      console.error('❌ UPLOAD FAILED:', e);
+      console.error('UPLOAD FAILED:', e);
       const ui = mapAuthError(e, 'submit');
       dialog.show({
         title: 'Upload Failed',
@@ -604,8 +587,6 @@ export default function Onboarding() {
         updated_at: new Date().toISOString(),
       };
 
-      console.log('📤 Sending payload to Supabase:', dbPayload);
-
       const { error } = await supabase.from('profiles').upsert(dbPayload, { onConflict: 'id' });
       if (error) throw error;
 
@@ -614,7 +595,7 @@ export default function Onboarding() {
       toast.show('Profile submitted successfully.', 'success');
       router.replace('/(auth)/PendingApproval');
     } catch (e: any) {
-      console.error('❌ Submission Error:', e);
+      console.error('Submission Error:', e);
       const ui = mapAuthError(e, 'submit');
       dialog.show({
         title: 'Submission Failed',
@@ -649,9 +630,7 @@ export default function Onboarding() {
   const progressPct = Math.round((step / TOTAL_STEPS) * 100);
 
   if (!isReady) {
-    return (
-      <ActivityIndicator style={{ flex: 1 }} size="large" color={theme.colors.text} />
-    );
+    return <ActivityIndicator style={{ flex: 1 }} size="large" color={theme.colors.text} />;
   }
 
   return (
@@ -662,10 +641,14 @@ export default function Onboarding() {
             Step {step} of {TOTAL_STEPS} ({progressPct}%)
           </Text>
 
-          <TouchableOpacity onPress={resetOnboarding} style={styles.resetBtn} activeOpacity={0.85}>
-            <Ionicons name="refresh-circle" size={16} color={theme.colors.danger} />
-            <Text style={styles.resetBtnText}>RESET</Text>
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity onPress={resetOnboarding} style={styles.resetBtn} activeOpacity={0.85}>
+              <Ionicons name="refresh-circle" size={16} color={theme.colors.danger} />
+              <Text style={styles.resetBtnText}>RESET</Text>
+            </TouchableOpacity>
+
+            <SignOutButton variant="row" label="SAVE & LOGOUT" style={styles.signOutBtn} />
+          </View>
         </View>
 
         <View style={styles.progressBarBg}>
@@ -679,9 +662,7 @@ export default function Onboarding() {
       </View>
 
       <ScrollView style={styles.contentScroller} contentContainerStyle={styles.scrollArea}>
-        {!!statusMessage && (
-          <StatusBanner theme={theme} tone={statusTone} text={statusMessage} />
-        )}
+        {!!statusMessage && <StatusBanner theme={theme} tone={statusTone} text={statusMessage} />}
 
         {draftRestored && !statusMessage && (
           <StatusBanner
@@ -702,12 +683,11 @@ export default function Onboarding() {
                   k="fullName"
                   value={formData.fullName}
                   missing={missing}
-                  onChangeText={(v: any) =>
-                    setFormData((prev: any) => ({ ...prev, fullName: v }))
-                  }
+                  onChangeText={(v: any) => setFormData((prev: any) => ({ ...prev, fullName: v }))}
                   required
                   style={{ flex: 2.5 }}
                 />
+
                 <FormInput
                   styles={styles}
                   theme={theme}
@@ -715,9 +695,7 @@ export default function Onboarding() {
                   k="phone"
                   value={formData.phone}
                   missing={missing}
-                  onChangeText={(v: any) =>
-                    setFormData((prev: any) => ({ ...prev, phone: v }))
-                  }
+                  onChangeText={(v: any) => setFormData((prev: any) => ({ ...prev, phone: v }))}
                   required
                   keyboardType="phone-pad"
                   style={{ flex: 1.5, marginLeft: 12 }}
@@ -731,7 +709,6 @@ export default function Onboarding() {
                   </Text>
 
                   {Platform.OS === 'web' ? (
-                    // eslint-disable-next-line react/no-unknown-property
                     <input
                       type="date"
                       value={formData.dob}
@@ -746,9 +723,7 @@ export default function Onboarding() {
                       value={formData.dob}
                       placeholder="YYYY-MM-DD"
                       placeholderTextColor={theme.colors.mutedText}
-                      onChangeText={(v) =>
-                        setFormData((prev: any) => ({ ...prev, dob: v }))
-                      }
+                      onChangeText={(v) => setFormData((prev: any) => ({ ...prev, dob: v }))}
                     />
                   )}
                 </View>
@@ -761,9 +736,7 @@ export default function Onboarding() {
                   value={formData.gender}
                   data={GENDER_DATA}
                   missing={missing}
-                  onSelect={(item: any) =>
-                    setFormData((prev: any) => ({ ...prev, gender: item.value }))
-                  }
+                  onSelect={(item: any) => setFormData((prev: any) => ({ ...prev, gender: item.value }))}
                   required
                   style={{ flex: 0.8, marginLeft: 12 }}
                 />
@@ -776,9 +749,7 @@ export default function Onboarding() {
                   value={formData.height}
                   data={HEIGHT_DATA}
                   missing={missing}
-                  onSelect={(item: any) =>
-                    setFormData((prev: any) => ({ ...prev, height: item.value }))
-                  }
+                  onSelect={(item: any) => setFormData((prev: any) => ({ ...prev, height: item.value }))}
                   required
                   style={{ flex: 1, marginLeft: 12 }}
                 />
@@ -878,47 +849,45 @@ export default function Onboarding() {
                 }
               />
 
-              {filterCodes.country && filterCodes.state && (
-                (() => {
-                  const cities = City.getCitiesOfState(filterCodes.country, filterCodes.state) || [];
-                  const topCities = cities.slice(0, 10);
-                  if (topCities.length === 0) return null;
+              {filterCodes.country && filterCodes.state
+                ? (() => {
+                    const cities = City.getCitiesOfState(filterCodes.country, filterCodes.state) || [];
+                    const topCities = cities.slice(0, 10);
+                    if (topCities.length === 0) return null;
 
-                  return (
-                    <View style={{ marginTop: -10, marginBottom: 15, paddingHorizontal: 4 }}>
-                      <Text style={[styles.label, { fontSize: 10, marginBottom: 8 }]}>
-                        Suggestions
-                      </Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                        {topCities.map((c) => (
-                          <TouchableOpacity
-                            key={c.name}
-                            onPress={() =>
-                              setFormData((prev: any) => ({ ...prev, currentCity: c.name }))
-                            }
-                            style={[
-                              styles.inlineAddBtn,
-                              formData.currentCity === c.name && {
-                                borderColor: theme.colors.primary,
-                              },
-                            ]}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 11,
-                                fontWeight: '700',
-                                color: theme.colors.text,
-                              }}
+                    return (
+                      <View style={{ marginTop: -10, marginBottom: 15, paddingHorizontal: 4 }}>
+                        <Text style={[styles.label, { fontSize: 10, marginBottom: 8 }]}>Suggestions</Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                          {topCities.map((c) => (
+                            <TouchableOpacity
+                              key={c.name}
+                              onPress={() =>
+                                setFormData((prev: any) => ({ ...prev, currentCity: c.name }))
+                              }
+                              style={[
+                                styles.inlineAddBtn,
+                                formData.currentCity === c.name && {
+                                  borderColor: theme.colors.primary,
+                                },
+                              ]}
                             >
-                              {c.name}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
+                              <Text
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: '700',
+                                  color: theme.colors.text,
+                                }}
+                              >
+                                {c.name}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
                       </View>
-                    </View>
-                  );
-                })()
-              )}
+                    );
+                  })()
+                : null}
 
               <FormDropdown
                 styles={styles}
@@ -954,86 +923,94 @@ export default function Onboarding() {
                 </TouchableOpacity>
               </View>
 
-              {(formData.education_history || []).map((edu: any, i: number) => (
-                <View key={i} style={styles.compactFormBox}>
-                  <View style={styles.eduRowHorizontal}>
-                    <Dropdown
-                      style={[styles.dropdown, { flex: 1 }]}
-                      data={EDUCATION_DATA}
-                      labelField="label"
-                      valueField="value"
-                      placeholder="Level"
-                      placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
-                      selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
-                      value={edu.level}
-                      onChange={(item: any) => {
-                        const updated = [...formData.education_history];
-                        updated[i].level = item.value;
-                        setFormData((prev: any) => ({ ...prev, education_history: updated }));
-                      }}
-                    />
+              {(formData.education_history || []).map((edu: any, i: number) => {
+                const fieldQuery = String(edu.field || '').trim().toLowerCase();
 
-                    <Dropdown
-                      style={[styles.dropdown, { flex: 1, marginLeft: 8 }]}
-                      data={FIELD_OF_STUDY_DATA}
-                      labelField="label"
-                      valueField="value"
-                      placeholder="Field"
-                      placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
-                      selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
-                      value={edu.field}
-                      onChange={(item: any) => {
-                        const updated = [...formData.education_history];
-                        updated[i].field = item.value;
-                        setFormData((prev: any) => ({ ...prev, education_history: updated }));
-                      }}
-                    />
+                const fieldSuggestions = FIELD_OF_STUDY_DATA.filter((f: any) => {
+                  const label = String(f?.label ?? '').toLowerCase();
+                  const value = String(f?.value ?? '').toLowerCase();
+                  return !fieldQuery || label.includes(fieldQuery) || value.includes(fieldQuery);
+                });
 
-                    <TextInput
-                      style={[styles.standardInput, { flex: 1, marginLeft: 8 }]}
-                      placeholder="University"
-                      placeholderTextColor={theme.colors.mutedText}
-                      value={edu.university}
-                      onChangeText={(v) => {
-                        const updated = [...formData.education_history];
-                        updated[i].university = v;
-                        setFormData((prev: any) => ({ ...prev, education_history: updated }));
-                      }}
-                    />
-
-                    {formData.education_history.length > 1 && (
-                      <TouchableOpacity
-                        onPress={() => {
-                          const updated = formData.education_history.filter(
-                            (_: any, idx: number) => idx !== i
-                          );
+                return (
+                  <View key={i} style={styles.compactFormBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Dropdown
+                        style={[styles.dropdown, { flex: 1 }]}
+                        data={EDUCATION_DATA}
+                        labelField="label"
+                        valueField="value"
+                        placeholder="Level"
+                        placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
+                        selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
+                        value={edu.level}
+                        onChange={(item: any) => {
+                          const updated = [...formData.education_history];
+                          updated[i].level = item.value;
                           setFormData((prev: any) => ({ ...prev, education_history: updated }));
                         }}
-                        style={{ marginLeft: 8 }}
-                        activeOpacity={0.85}
-                      >
-                        <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
-                      </TouchableOpacity>
-                    )}
+                      />
+
+                      <TextInput
+                        style={[styles.standardInput, { flex: 1, marginLeft: 8 }]}
+                        placeholder="University"
+                        placeholderTextColor={theme.colors.mutedText}
+                        value={edu.university}
+                        onChangeText={(v) => {
+                          const updated = [...formData.education_history];
+                          updated[i].university = v;
+                          setFormData((prev: any) => ({ ...prev, education_history: updated }));
+                        }}
+                      />
+
+                      {formData.education_history.length > 1 && (
+                        <TouchableOpacity
+                          onPress={() => {
+                            const updated = formData.education_history.filter(
+                              (_: any, idx: number) => idx !== i,
+                            );
+                            setFormData((prev: any) => ({ ...prev, education_history: updated }));
+                          }}
+                          style={{ marginLeft: 8 }}
+                          activeOpacity={0.85}
+                        >
+                          <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    <View style={{ marginTop: 10 }}>
+                      <SuggestionInput
+                        value={edu.field || ''}
+                        placeholder="Field of study"
+                        suggestions={fieldSuggestions}
+                        theme={theme}
+                        onChange={(v) => {
+                          const updated = [...formData.education_history];
+                          updated[i].field = v;
+                          setFormData((prev: any) => ({ ...prev, education_history: updated }));
+                        }}
+                      />
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
 
               <View style={styles.divider} />
 
-              <FormDropdown
-                styles={styles}
-                theme={theme}
-                label="Profession"
-                k="profession"
-                value={formData.profession}
-                data={PROFESSION_DATA}
-                missing={missing}
-                onSelect={(item: any) =>
-                  setFormData((prev: any) => ({ ...prev, profession: item.value }))
-                }
-                required
-              />
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Profession <Text style={styles.reqStar}>*</Text>
+                </Text>
+
+                <SuggestionInput
+                  value={formData.profession || ''}
+                  placeholder="Type your profession or pick a suggestion"
+                  suggestions={PROFESSION_DATA}
+                  theme={theme}
+                  onChange={(v) => setFormData((prev: any) => ({ ...prev, profession: v }))}
+                />
+              </View>
 
               <FormInput
                 styles={styles}
@@ -1167,6 +1144,7 @@ export default function Onboarding() {
                   required
                   style={{ flex: 1 }}
                 />
+
                 <FormInput
                   styles={styles}
                   theme={theme}
@@ -1179,6 +1157,7 @@ export default function Onboarding() {
                   }
                   style={{ flex: 1, marginLeft: 12 }}
                 />
+
                 <FormInput
                   styles={styles}
                   theme={theme}
@@ -1208,6 +1187,7 @@ export default function Onboarding() {
                   required
                   style={{ flex: 1 }}
                 />
+
                 <FormInput
                   styles={styles}
                   theme={theme}
@@ -1220,6 +1200,7 @@ export default function Onboarding() {
                   }
                   style={{ flex: 1, marginLeft: 12 }}
                 />
+
                 <FormInput
                   styles={styles}
                   theme={theme}
@@ -1301,7 +1282,7 @@ export default function Onboarding() {
                       labelField="label"
                       valueField="value"
                       value={sib.occupation}
-                      placeholder="Job"
+                      placeholder="Profession"
                       placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
                       selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
                       onChange={(item: any) => {
@@ -1441,6 +1422,16 @@ function makeStyles(theme: any) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
+    },
+
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+
+    signOutBtn: {
+      minWidth: 150,
     },
 
     stepText: {

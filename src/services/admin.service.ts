@@ -549,19 +549,20 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
   },
 
   async getAnalytics() {
-  // "Total Members" should reflect actual submitted profiles.
-  // Counting rows from `user_roles` is fragile (missing role rows, casing differences, etc.).
     const [{ count: totalMembers, error: totalErr }, { count: pending, error: pendingErr }] =
       await Promise.all([
         supabase
           .from('profiles')
           .select('*', { count: 'exact', head: true })
-          .eq('is_submitted', true),
+          .eq('is_submitted', true)
+          .eq('role', 'USER'),
+
         supabase
           .from('profiles')
           .select('*', { count: 'exact', head: true })
           .eq('is_approved', false)
-          .eq('is_submitted', true),
+          .eq('is_submitted', true)
+          .eq('role', 'USER'),
       ]);
 
     if (totalErr) console.warn('getAnalytics totalMembers error:', totalErr.message);

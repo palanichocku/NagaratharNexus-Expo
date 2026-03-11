@@ -37,7 +37,6 @@ export const OCCUPATION_DATA = [
   { label: 'Self-Employed', value: 'Self-Employed' },
   { label: 'Business Owner', value: 'Business Owner'},
   { label: 'Home Maker', value: 'Home Maker'},
-  { label: 'Other', value: 'Other' }
   
 ];
 
@@ -55,15 +54,14 @@ export const EDUCATION_DATA = [
   { label: 'High School', value: 'High School' }, 
   { label: 'Diploma', value: 'Diploma' },
   { label: "Bachelor's", value: "Bachelor's" }, 
-  { label: 'Professional', value: 'Professional' },
   { label: 'M.D', value: 'M.D' },
-  { label: 'DPT', value: 'DPT' },
-  { label: 'BDS', value: 'BDS' },
-  { label: 'DDS', value: 'DDS' },
-  { label: 'MDS', value: 'MDS' },
-  { label: 'DMD', value: 'DMD' },
-  { label: 'JD', value: 'JD' },
+  { label: 'D.P.T', value: 'D.P.T' },
+  { label: 'B.D.S', value: 'B.D.S' },
+  { label: 'J.D', value: 'J.D' },
   { label: 'M.B.B.S', value: 'M.B.B.S' },
+  { label: 'LL.B', value: 'LL.B' },
+  { label: 'M.P.A', value: 'M.P.A' },
+
 
 ];
 
@@ -79,7 +77,8 @@ export const FIELD_OF_STUDY_DATA = [
   { label: 'Law', value: 'Law' }, 
   { label: 'Dentistry', value: 'Dentistry' }, 
   { label: 'Finance', value: 'Finance' }, 
-  { label: 'Other', value: 'Other' }
+  { label: 'Psychology', value: 'Psychology' },
+  { label: 'Education', value: 'Education' }
 ];
 
 export const PROFESSION_DATA = [
@@ -95,7 +94,7 @@ export const PROFESSION_DATA = [
   { label: 'Nurse', value: 'Nurse' },   
   { label: 'Business Analyst', value: 'Business Analyst' }, 
   { label: 'Pharmacist', value: 'Pharmacist' },
-  { label: 'Other', value: 'Other' }
+  { label: 'Physical Therapist', value: 'Physical Therapist' }
 ];
 
 export const KOVIL_DATA = [

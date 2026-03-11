@@ -1,4 +1,3 @@
-// src/profileForm/profileFormKit.tsx
 import React from 'react';
 import {
   View,
@@ -17,7 +16,6 @@ import {
   RESIDENT_STATUS_DATA,
   EDUCATION_DATA,
   FIELD_OF_STUDY_DATA,
-  UNIVERSITY_DATA,
   MARITAL_STATUS_DATA,
   PROFESSION_DATA,
   NATIVE_PLACES_DATA,
@@ -28,13 +26,18 @@ import {
   INTEREST_DATA,
   OCCUPATION_DATA,
 } from '../constants/appData';
+import SuggestionInput from '@/src/components/form/SuggestionInput';
 
 type ThemeLike = any;
 
 export type ProfileTempData = Record<string, any>;
 
 export function getCountryOptions() {
-  return Country.getAllCountries().map((c) => ({ label: c.name, value: c.name, isoCode: c.isoCode }));
+  return Country.getAllCountries().map((c) => ({
+    label: c.name,
+    value: c.name,
+    isoCode: c.isoCode,
+  }));
 }
 
 export function getCountryIsoByName(countryName?: string): string {
@@ -50,12 +53,12 @@ export function getStateOptions(countryName?: string) {
 }
 
 export function getPirivuOptions(kovilValue?: string) {
-  const k = (KOVIL_DATA || []).find((x: any) => x.value === kovilValue || x.label === kovilValue);
+  const k = (KOVIL_DATA || []).find(
+    (x: any) => x.value === kovilValue || x.label === kovilValue,
+  );
   const pirivus: string[] = (k?.pirivus || []) as any;
   return pirivus.map((p) => ({ label: p, value: p }));
 }
-
-// ---- Shared Form Controls (used in ProfileDisplay + later in Onboarding) ----
 
 export function FormTextInput({
   label,
@@ -159,6 +162,7 @@ export function HeightStepper({
     const next = all[Math.max(0, idx - 1)];
     onChange(next?.value || '');
   };
+
   const inc = () => {
     const next = all[Math.min(all.length - 1, idx + 1)];
     onChange(next?.value || '');
@@ -166,13 +170,25 @@ export function HeightStepper({
 
   return (
     <View style={makeInlineStyles(theme).stepperWrap}>
-      <TouchableOpacity onPress={dec} style={makeInlineStyles(theme).stepBtn} activeOpacity={0.85}>
+      <TouchableOpacity
+        onPress={dec}
+        style={makeInlineStyles(theme).stepBtn}
+        activeOpacity={0.85}
+      >
         <Ionicons name="remove" size={16} color={theme.colors.text} />
       </TouchableOpacity>
+
       <View style={makeInlineStyles(theme).stepValueWrap}>
-        <Text style={makeInlineStyles(theme).stepValueText}>{current?.label || value || 'Select'}</Text>
+        <Text style={makeInlineStyles(theme).stepValueText}>
+          {current?.label || value || 'Select'}
+        </Text>
       </View>
-      <TouchableOpacity onPress={inc} style={makeInlineStyles(theme).stepBtn} activeOpacity={0.85}>
+
+      <TouchableOpacity
+        onPress={inc}
+        style={makeInlineStyles(theme).stepBtn}
+        activeOpacity={0.85}
+      >
         <Ionicons name="add" size={16} color={theme.colors.text} />
       </TouchableOpacity>
     </View>
@@ -188,7 +204,10 @@ export function EducationEditor({
   onChange: (v: any[]) => void;
   theme: ThemeLike;
 }) {
-  const items = Array.isArray(value) && value.length > 0 ? value : [{ level: '', field: '', university: '' }];
+  const items =
+    Array.isArray(value) && value.length > 0
+      ? value
+      : [{ level: '', field: '', university: '' }];
 
   const update = (idx: number, patch: any) => {
     const next = items.map((it, i) => (i === idx ? { ...it, ...patch } : it));
@@ -196,6 +215,7 @@ export function EducationEditor({
   };
 
   const add = () => onChange([...(items || []), { level: '', field: '', university: '' }]);
+
   const remove = (idx: number) => {
     const next = items.filter((_, i) => i !== idx);
     onChange(next.length ? next : [{ level: '', field: '', university: '' }]);
@@ -205,45 +225,59 @@ export function EducationEditor({
     <View style={{ gap: 10 }}>
       <View style={makeInlineStyles(theme).rowHeader}>
         <Text style={makeInlineStyles(theme).inlineHeader}>Education History</Text>
-        <TouchableOpacity onPress={add} style={makeInlineStyles(theme).inlineAddBtn} activeOpacity={0.85}>
+        <TouchableOpacity
+          onPress={add}
+          style={makeInlineStyles(theme).inlineAddBtn}
+          activeOpacity={0.85}
+        >
           <Ionicons name="add" size={16} color={theme.colors.text} />
           <Text style={makeInlineStyles(theme).inlineAddText}>Add</Text>
         </TouchableOpacity>
       </View>
 
-      {items.map((edu, idx) => (
-        <View key={idx} style={makeInlineStyles(theme).repeatCard}>
-          <View style={makeInlineStyles(theme).repeatHeader}>
-            <Text style={makeInlineStyles(theme).repeatTitle}>Entry {idx + 1}</Text>
-            <TouchableOpacity onPress={() => remove(idx)} activeOpacity={0.85}>
-              <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
-            </TouchableOpacity>
+      {items.map((edu, idx) => {
+        const fieldQuery = String(edu.field || '').trim().toLowerCase();
+
+        const fieldSuggestions = (FIELD_OF_STUDY_DATA || []).filter((f: any) => {
+          const label = String(f?.label ?? '').toLowerCase();
+          const value = String(f?.value ?? '').toLowerCase();
+          return !fieldQuery || label.includes(fieldQuery) || value.includes(fieldQuery);
+        });
+
+        return (
+          <View key={idx} style={makeInlineStyles(theme).repeatCard}>
+            <View style={makeInlineStyles(theme).repeatHeader}>
+              <Text style={makeInlineStyles(theme).repeatTitle}>Entry {idx + 1}</Text>
+              <TouchableOpacity onPress={() => remove(idx)} activeOpacity={0.85}>
+                <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
+              </TouchableOpacity>
+            </View>
+
+            <FormSelect
+              value={edu.level}
+              placeholder="Select degree"
+              data={EDUCATION_DATA || []}
+              onChangeValue={(v) => update(idx, { level: v })}
+              theme={theme}
+            />
+
+            <SuggestionInput
+              value={edu.field || ''}
+              placeholder="Field of study"
+              suggestions={fieldSuggestions}
+              theme={theme}
+              onChange={(v) => update(idx, { field: v })}
+            />
+
+            <FormTextInput
+              value={edu.university || ''}
+              placeholder="University / Institute"
+              onChange={(v) => update(idx, { university: v })}
+              theme={theme}
+            />
           </View>
-
-          <FormSelect
-            value={edu.level}
-            placeholder="Select degree"
-            data={EDUCATION_DATA || []}
-            onChangeValue={(v) => update(idx, { level: v })}
-            theme={theme}
-          />
-
-          <FormSelect
-            value={edu.field}
-            placeholder="Select field of study"
-            data={FIELD_OF_STUDY_DATA || []}
-            onChangeValue={(v) => update(idx, { field: v })}
-            theme={theme}
-          />
-
-          <FormTextInput
-            value={edu.university || ''}
-            placeholder="University / Institute"
-            onChange={(v) => update(idx, { university: v })}
-            theme={theme}
-          />
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -272,7 +306,11 @@ export function SiblingsEditor({
     <View style={{ gap: 10 }}>
       <View style={makeInlineStyles(theme).rowHeader}>
         <Text style={makeInlineStyles(theme).inlineHeader}>Siblings</Text>
-        <TouchableOpacity onPress={add} style={makeInlineStyles(theme).inlineAddBtn} activeOpacity={0.85}>
+        <TouchableOpacity
+          onPress={add}
+          style={makeInlineStyles(theme).inlineAddBtn}
+          activeOpacity={0.85}
+        >
           <Ionicons name="add" size={16} color={theme.colors.text} />
           <Text style={makeInlineStyles(theme).inlineAddText}>Add</Text>
         </TouchableOpacity>
@@ -389,7 +427,6 @@ function makeInlineStyles(theme: any) {
       borderColor: theme.colors.border,
       justifyContent: 'center',
       alignItems: 'center',
-
       shadowColor: '#000',
       shadowOpacity: Platform.OS === 'web' ? 0 : 0.06,
       shadowRadius: 10,

@@ -323,23 +323,11 @@ async function generateTestUsers(count: number) {
         const kData = pickKovil();
 
         const gender = pickValue(AppData.GENDER_DATA);
-        const firstName = pick([
-          'Arun',
-          'Senthil',
-          'Meenakshi',
-          'Priya',
-          'Karthik',
-          'Deepak',
-          'Anitha',
-          'Vijay',
-        ]);
-        const lastName = pick([
-          'Palaniappan',
-          'Chidambaram',
-          'Muthu',
-          'Annamalai',
-          'Vellaiyan',
-        ]);
+        const seq = globalIndex + 1;
+        const memberName = `member${seq}`;
+        const nexusName = `nexus${seq}`;
+        const fullName = `${memberName} ${nexusName}`;
+        const email = `${memberName}@nexus.com`;
 
         const makeEdu = () => ({
           level: pickValue(AppData.EDUCATION_DATA),
@@ -352,7 +340,6 @@ async function generateTestUsers(count: number) {
         const citizenship = pickValue(AppData.RESIDENT_COUNTRY_DATA);
         const dob = getRandomDate(new Date(1985, 0, 1), new Date(2000, 11, 31));
 
-        const email = `member_${Date.now()}_${c}_${i}@nexus-test.local`;
         const password = STANDARD_TEST_PASSWORD;
 
         const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
@@ -384,7 +371,7 @@ async function generateTestUsers(count: number) {
           is_submitted: status.is_submitted,
           role: 'USER',
 
-          full_name: `${firstName} ${lastName} Test_${c}_${i}`,
+          full_name: fullName,
           dob,
           gender,
           email,
@@ -421,17 +408,17 @@ async function generateTestUsers(count: number) {
           siblings: [pick(['Brother', 'Sister'])],
 
           family_initials: pickValue(AppData.FAMILY_INITIALS_DATA),
-          father_name: `Father of ${firstName}`,
+          father_name: `Father of ${memberName}`,
           father_work: 'Business',
           father_phone: '+11234567890',
-          mother_name: `Mother of ${firstName}`,
+          mother_name: `Mother of ${memberName}`,
           mother_work: 'Home Maker',
           mother_phone: '+11234567890',
 
           family_details: {
             siblings: [
               {
-                name: `${firstName}'s sibling`,
+                name: `${memberName}'s sibling`,
                 maritalStatus: 'Married',
                 occupation: pickValue(AppData.OCCUPATION_DATA),
               },
