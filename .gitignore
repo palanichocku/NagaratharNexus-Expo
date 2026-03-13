@@ -23,6 +23,10 @@ yarn-error.*
 supabase/.temp/
 supabase/.migrations/
 supabase/functions/**/.env
+ops/.env.local
+ops/.env.test
+ops/.env.production
+ops/.env.*.local
 
 # Native
 .kotlin/

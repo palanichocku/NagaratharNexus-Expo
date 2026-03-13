@@ -1,312 +1,289 @@
 #!/usr/bin/env bash
-# =============================================================================
-# sync_supabase_db.sh  (v2 — fixed auth schema conflict + row count verification)
-# Mirror NagaratharNexus (prod) → NagaratharNexus-Dev (dev)
-#
-# USAGE:
-#   chmod +x sync_supabase_db.sh
-#   ./sync_supabase_db.sh
-#
-# REQUIREMENTS:
-#   - PostgreSQL client tools (pg_dump, psql) installed locally
-#     Install on Mac:   brew install postgresql
-#     Install on Linux: sudo apt-get install postgresql-client
-#     Install on Win:   Use WSL or download from postgresql.org/download
-#
-# FIND YOUR CONNECTION STRINGS:
-#   Supabase Dashboard → Your Project → Settings → Database
-#   → "Connection string" tab → URI format
-#   It looks like: postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres
-#   NOTE: URL-encode special chars in password, e.g. @ → %40
-# =============================================================================
+set -Eeuo pipefail
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh"
 
-# ─────────────────────────────────────────────
-# CONFIGURE THESE BEFORE RUNNING
-# ─────────────────────────────────────────────
+ENV_FILE="${ENV_FILE:-./ops/.env.local}"
 
-# Production DB (source) — NagaratharNexus
-SOURCE_DB_URL="postgresql://postgres:C00kingk0mali%402026@db.lgfgalppibkdzkwqdabf.supabase.co:5432/postgres"
+SOURCE_ENV=""
+TARGET_ENV=""
+MODE="full"
+AUTH_MODE="skip"
+AUTO_YES=0
+KEEP_DUMPS=0
+DRY_RUN=0
 
-# Dev DB (target) — NagaratharNexus-Dev
-TARGET_DB_URL="postgresql://postgres:C00kingk0mali%402026@db.ipvsnjjhcxluyicfnrgh.supabase.co:5432/postgres"
+PUBLIC_EXTENSIONS=(
+  "pg_trgm"
+)
 
-DUMP_FILE="/tmp/nagarathar_nexus_$(date +%Y%m%d_%H%M%S).dump"
+usage() {
+  cat <<'EOF'
+Usage:
+  ENV_FILE=./ops/.env.sync.local ./scripts/sync_supabase_db.sh --source dev|prod --target prod|dev --mode full|schema-only [--auth copy|skip] [--yes] [--keep-dumps]
+EOF
+}
 
-# ─────────────────────────────────────────────
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
-log()    { echo -e "${GREEN}[✔]${NC} $1"; }
-warn()   { echo -e "${YELLOW}[!]${NC} $1"; }
-error()  { echo -e "${RED}[✘]${NC} $1"; exit 1; }
-divider(){ echo -e "\n${YELLOW}══════════════════════════════════════════════${NC}"; }
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --source)
+      SOURCE_ENV="${2:-}"
+      shift 2
+      ;;
+    --target)
+      TARGET_ENV="${2:-}"
+      shift 2
+      ;;
+    --mode)
+      MODE="${2:-}"
+      shift 2
+      ;;
+    --auth)
+      AUTH_MODE="${2:-}"
+      shift 2
+      ;;
+    --yes)
+      AUTO_YES=1
+      shift
+      ;;
+    --keep-dumps)
+      KEEP_DUMPS=1
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
 
-# ─────────────────────────────────────────────
-# STEP 0: Pre-flight checks
-# ─────────────────────────────────────────────
-divider
-echo "  NagaratharNexus → NagaratharNexus-Dev Sync  (v2)"
-divider
+require_cmd pg_dump
+require_cmd pg_restore
+require_cmd psql
 
-warn "Checking prerequisites..."
-command -v pg_dump >/dev/null 2>&1 || error "pg_dump not found.
-  Mac:   brew install postgresql
-  Linux: sudo apt-get install postgresql-client"
-command -v psql >/dev/null 2>&1 || error "psql not found."
-log "PostgreSQL client tools found."
+load_env_file "$ENV_FILE"
 
-if [[ "$SOURCE_DB_URL" == *"YOUR-PROD"* ]] || [[ "$TARGET_DB_URL" == *"YOUR-DEV"* ]]; then
-  error "Please configure SOURCE_DB_URL and TARGET_DB_URL at the top of this script."
+[[ "$SOURCE_ENV" == "dev" || "$SOURCE_ENV" == "prod" ]] || fail "Invalid --source. Use dev or prod."
+[[ "$TARGET_ENV" == "dev" || "$TARGET_ENV" == "prod" ]] || fail "Invalid --target. Use dev or prod."
+[[ "$SOURCE_ENV" != "$TARGET_ENV" ]] || fail "--source and --target must be different."
+[[ "$MODE" == "full" || "$MODE" == "schema-only" ]] || fail "Invalid --mode. Use full or schema-only."
+[[ "$AUTH_MODE" == "copy" || "$AUTH_MODE" == "skip" ]] || fail "Invalid --auth. Use copy or skip."
+
+if [[ "$MODE" == "schema-only" && "$AUTH_MODE" == "copy" ]]; then
+  fail "--auth copy is only allowed with --mode full."
 fi
 
-# ─────────────────────────────────────────────
-# STEP 1: Test connections
-# ─────────────────────────────────────────────
+require_env DEV_DB_URL
+require_env PROD_DB_URL
+
+if [[ "$TARGET_ENV" == "prod" ]]; then
+  require_prod_write_ack "prod target DB"
+fi
+
+resolve_db_url() {
+  case "$1" in
+    dev)  echo "$DEV_DB_URL" ;;
+    prod) echo "$PROD_DB_URL" ;;
+    *)    fail "Unknown environment: $1" ;;
+  esac
+}
+
+SOURCE_DB_URL="$(resolve_db_url "$SOURCE_ENV")"
+TARGET_DB_URL="$(resolve_db_url "$TARGET_ENV")"
+
+TMP_DIR="$(mktemp -d /tmp/supabase_sync.XXXXXX)"
+PUBLIC_DUMP_FILE="${TMP_DIR}/public.dump"
+AUTH_DUMP_FILE="${TMP_DIR}/auth.dump"
+SOURCE_TABLES_FILE="${TMP_DIR}/source_tables.txt"
+TARGET_TABLES_FILE="${TMP_DIR}/target_tables.txt"
+
+cleanup() {
+  if [[ "$KEEP_DUMPS" -eq 0 ]]; then
+    rm -rf "$TMP_DIR"
+  else
+    warn "Keeping temp files at: $TMP_DIR"
+  fi
+}
+trap cleanup EXIT
+
 divider
+echo "  Supabase DB Sync"
+divider
+
+log "Loaded env file: $ENV_FILE"
 warn "Testing database connections..."
 
-psql "$SOURCE_DB_URL" -c "SELECT current_database(), now();" > /dev/null 2>&1 \
-  || error "Cannot connect to SOURCE database. Check SOURCE_DB_URL and password."
-log "Source DB connection: OK"
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  psql "$SOURCE_DB_URL" -v ON_ERROR_STOP=1 -c "SELECT current_database(), now();" >/dev/null 2>&1 \
+    || fail "Cannot connect to SOURCE database."
 
-psql "$TARGET_DB_URL" -c "SELECT current_database(), now();" > /dev/null 2>&1 \
-  || error "Cannot connect to TARGET database. Check TARGET_DB_URL and password."
+  psql "$TARGET_DB_URL" -v ON_ERROR_STOP=1 -c "SELECT current_database(), now();" >/dev/null 2>&1 \
+    || fail "Cannot connect to TARGET database."
+fi
+
+log "Source DB connection: OK"
 log "Target DB connection: OK"
 
-# ─────────────────────────────────────────────
-# SAFETY PROMPT
-# ─────────────────────────────────────────────
+SOURCE_HOST="$(safe_db_hint "$SOURCE_DB_URL")"
+TARGET_HOST="$(safe_db_hint "$TARGET_DB_URL")"
+
 divider
-warn "⚠️  WARNING: This will COMPLETELY WIPE NagaratharNexus-Dev and replace with prod data."
-echo ""
-read -p "   Type 'yes' to continue: " confirm
-[[ "$confirm" == "yes" ]] || { echo "Aborted."; exit 0; }
+warn "Source : $SOURCE_ENV  ($SOURCE_HOST)"
+warn "Target : $TARGET_ENV  ($TARGET_HOST)"
+warn "Mode   : $MODE"
+warn "Auth   : $AUTH_MODE"
 
-# ─────────────────────────────────────────────
-# STEP 2: Dump ONLY the public schema from source
-# We exclude auth/storage/realtime because Supabase pre-creates those
-# in every new project — pg_restore cannot overwrite them.
-# Auth users are handled separately in Step 5.
-# ─────────────────────────────────────────────
+if [[ "$AUTO_YES" -ne 1 ]]; then
+  divider
+  warn "⚠️  WARNING: This will modify the TARGET database: $TARGET_ENV"
+  echo ""
+  if [[ "$MODE" == "full" ]]; then
+    echo "  - public schema will be dropped and recreated"
+    echo "  - public data will be replaced from source"
+  else
+    echo "  - public schema will be dropped and recreated"
+    echo "  - public data will NOT be copied"
+  fi
+
+  if [[ "$AUTH_MODE" == "copy" ]]; then
+    echo "  - auth.users and auth.identities will be replaced from source"
+  else
+    echo "  - auth tables will be left untouched"
+  fi
+
+  echo ""
+  read -r -p "Type the TARGET environment name ('$TARGET_ENV') to continue: " confirm
+  [[ "$confirm" == "$TARGET_ENV" ]] || { echo "Aborted."; exit 0; }
+fi
+
 divider
-warn "Dumping source database — public schema only..."
+if [[ "$MODE" == "full" ]]; then
+  warn "Dumping source public schema + data..."
+  run_cmd pg_dump \
+    "$SOURCE_DB_URL" \
+    --format=custom \
+    --no-owner \
+    --no-acl \
+    --schema=public \
+    --file="$PUBLIC_DUMP_FILE"
+else
+  warn "Dumping source public schema only..."
+  run_cmd pg_dump \
+    "$SOURCE_DB_URL" \
+    --format=custom \
+    --no-owner \
+    --no-acl \
+    --schema=public \
+    --schema-only \
+    --file="$PUBLIC_DUMP_FILE"
+fi
+log "Public dump complete: $PUBLIC_DUMP_FILE"
 
-pg_dump \
-  "$SOURCE_DB_URL" \
-  --format=custom \
-  --no-owner \
-  --no-acl \
-  --schema=public \
-  --verbose \
-  --file="$DUMP_FILE" 2>&1 | grep -E "(dumping|reading|saving|error|warning)" || true
+if [[ "$MODE" == "full" && "$AUTH_MODE" == "copy" ]]; then
+  divider
+  warn "Dumping source auth.users and auth.identities..."
+  run_cmd pg_dump \
+    "$SOURCE_DB_URL" \
+    --format=custom \
+    --no-owner \
+    --no-acl \
+    --data-only \
+    --table=auth.users \
+    --table=auth.identities \
+    --file="$AUTH_DUMP_FILE"
+  log "Auth dump complete: $AUTH_DUMP_FILE"
+fi
 
-DUMP_SIZE=$(du -sh "$DUMP_FILE" | cut -f1)
-log "Dump complete: $DUMP_FILE ($DUMP_SIZE)"
-
-# ─────────────────────────────────────────────
-# STEP 3: Wipe public schema on target
-# ─────────────────────────────────────────────
 divider
-warn "Clearing target public schema..."
+warn "Dropping and recreating target public schema..."
 
-psql "$TARGET_DB_URL" <<'EOF'
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  psql "$TARGET_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
 DROP SCHEMA IF EXISTS public CASCADE;
 CREATE SCHEMA public;
 GRANT ALL ON SCHEMA public TO postgres;
 GRANT ALL ON SCHEMA public TO public;
-EOF
+SQL
+else
+  echo "[DRY RUN] would drop and recreate target public schema"
+fi
 
-log "Target public schema cleared."
+log "Target public schema recreated."
 
-# ─────────────────────────────────────────────
-# STEP 4: Restore public schema to target
-# ─────────────────────────────────────────────
 divider
-warn "Restoring public schema to NagaratharNexus-Dev..."
+warn "Recreating required extensions on target..."
 
-pg_restore \
+for ext in "${PUBLIC_EXTENSIONS[@]}"; do
+  warn "Ensuring extension exists: $ext"
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    psql "$TARGET_DB_URL" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS $ext WITH SCHEMA public;"
+  else
+    echo "[DRY RUN] would run: CREATE EXTENSION IF NOT EXISTS $ext WITH SCHEMA public;"
+  fi
+done
+
+log "Required extensions recreated."
+
+divider
+warn "Restoring public schema to target..."
+
+run_cmd pg_restore \
   --dbname="$TARGET_DB_URL" \
   --no-owner \
   --no-acl \
   --schema=public \
-  --verbose \
-  "$DUMP_FILE" 2>&1 | grep -E "(creating|restoring|processing|error|warning)" || true
+  --exit-on-error \
+  "$PUBLIC_DUMP_FILE"
 
-log "Restore complete."
+log "Public restore complete."
 
-# ─────────────────────────────────────────────
-# STEP 5: Copy auth.users from prod → dev
-# Allows existing users to log into the dev environment.
-# ─────────────────────────────────────────────
-divider
-warn "Copying auth.users from prod → dev..."
+if [[ "$MODE" == "full" && "$AUTH_MODE" == "copy" ]]; then
+  divider
+  warn "Replacing target auth.users and auth.identities..."
 
-AUTH_SQL="/tmp/auth_users_$$.sql"
-
-psql "$SOURCE_DB_URL" -t -A -c "
-SELECT 'INSERT INTO auth.users(
-  instance_id, id, aud, role, email, encrypted_password,
-  email_confirmed_at, invited_at, confirmation_token, confirmation_sent_at,
-  recovery_token, recovery_sent_at, email_change_token_new, email_change,
-  email_change_sent_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data,
-  is_super_admin, created_at, updated_at, phone, phone_confirmed_at,
-  phone_change, phone_change_token, phone_change_sent_at,
-  email_change_token_current, email_change_confirm_status,
-  banned_until, reauthentication_token, reauthentication_sent_at,
-  is_sso_user, deleted_at
-) VALUES (
-  ' || quote_nullable(instance_id::text) || ',' ||
-  quote_nullable(id::text) || ',' ||
-  quote_nullable(aud) || ',' ||
-  quote_nullable(role) || ',' ||
-  quote_nullable(email) || ',' ||
-  quote_nullable(encrypted_password) || ',' ||
-  quote_nullable(email_confirmed_at::text) || ',' ||
-  quote_nullable(invited_at::text) || ',' ||
-  quote_nullable(confirmation_token) || ',' ||
-  quote_nullable(confirmation_sent_at::text) || ',' ||
-  quote_nullable(recovery_token) || ',' ||
-  quote_nullable(recovery_sent_at::text) || ',' ||
-  quote_nullable(email_change_token_new) || ',' ||
-  quote_nullable(email_change) || ',' ||
-  quote_nullable(email_change_sent_at::text) || ',' ||
-  quote_nullable(last_sign_in_at::text) || ',' ||
-  quote_nullable(raw_app_meta_data::text) || ',' ||
-  quote_nullable(raw_user_meta_data::text) || ',' ||
-  quote_nullable(is_super_admin::text) || ',' ||
-  quote_nullable(created_at::text) || ',' ||
-  quote_nullable(updated_at::text) || ',' ||
-  quote_nullable(phone) || ',' ||
-  quote_nullable(phone_confirmed_at::text) || ',' ||
-  quote_nullable(phone_change) || ',' ||
-  quote_nullable(phone_change_token) || ',' ||
-  quote_nullable(phone_change_sent_at::text) || ',' ||
-  quote_nullable(email_change_token_current) || ',' ||
-  quote_nullable(email_change_confirm_status::text) || ',' ||
-  quote_nullable(banned_until::text) || ',' ||
-  quote_nullable(reauthentication_token) || ',' ||
-  quote_nullable(reauthentication_sent_at::text) || ',' ||
-  quote_nullable(is_sso_user::text) || ',' ||
-  quote_nullable(deleted_at::text) ||
-') ON CONFLICT (id) DO NOTHING;'
-FROM auth.users;
-" > "$AUTH_SQL" 2>/dev/null || true
-
-LINE_COUNT=$(wc -l < "$AUTH_SQL" | tr -d ' ')
-if [[ "$LINE_COUNT" -gt 0 ]]; then
-  psql "$TARGET_DB_URL" -f "$AUTH_SQL" > /dev/null 2>&1 \
-    && log "Auth users copied ($LINE_COUNT users)." \
-    || warn "Some auth user inserts failed (may already exist — that's OK)."
-else
-  warn "No auth users found to copy."
-fi
-rm -f "$AUTH_SQL"
-
-# ─────────────────────────────────────────────
-# STEP 6: Verify row counts (public schema)
-# ─────────────────────────────────────────────
-divider
-warn "Verifying row counts (public schema)..."
-
-echo ""
-printf "%-40s %-15s %-15s %s\n" "TABLE" "SOURCE ROWS" "DEV ROWS" "STATUS"
-printf "%-40s %-15s %-15s %s\n" "────────────────────────────────────────" "───────────────" "───────────────" "──────"
-
-MISMATCH=0
-
-TABLES=$(psql "$SOURCE_DB_URL" -t -A -c "
-  SELECT table_name
-  FROM information_schema.tables
-  WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-  ORDER BY table_name;
-")
-
-while IFS= read -r table; do
-  [[ -z "$table" ]] && continue
-  src=$(psql "$SOURCE_DB_URL" -t -A -c "SELECT COUNT(*) FROM public.\"$table\";" 2>/dev/null | tr -d '[:space:]' || echo "ERR")
-  tgt=$(psql "$TARGET_DB_URL" -t -A -c "SELECT COUNT(*) FROM public.\"$table\";" 2>/dev/null | tr -d '[:space:]' || echo "ERR")
-
-  if [[ "$src" == "$tgt" ]]; then
-    STATUS="${GREEN}✔ MATCH${NC}"
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    psql "$TARGET_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+TRUNCATE TABLE auth.identities CASCADE;
+TRUNCATE TABLE auth.users CASCADE;
+COMMIT;
+SQL
   else
-    STATUS="${RED}✘ MISMATCH${NC}"
-    MISMATCH=1
+    echo "[DRY RUN] would truncate auth.identities and auth.users"
   fi
-  printf "%-40s %-15s %-15s " "$table" "$src" "$tgt"
-  echo -e "$STATUS"
-done <<< "$TABLES"
 
-echo ""
-if [[ $MISMATCH -eq 0 ]]; then
-  log "All row counts match! ✔"
-else
-  warn "Some row counts differ — review the table above."
+  log "Target auth tables cleared."
+
+  warn "Restoring auth.users and auth.identities..."
+
+  run_cmd pg_restore \
+    --dbname="$TARGET_DB_URL" \
+    --no-owner \
+    --no-acl \
+    --data-only \
+    --disable-triggers \
+    --exit-on-error \
+    "$AUTH_DUMP_FILE"
+
+  log "Auth restore complete."
 fi
 
-# ─────────────────────────────────────────────
-# STEP 7: Verify RLS policies
-# ─────────────────────────────────────────────
 divider
-warn "RLS policies on NagaratharNexus-Dev:"
-psql "$TARGET_DB_URL" -c "
-SELECT tablename, policyname, cmd, roles
-FROM pg_policies
-WHERE schemaname = 'public'
-ORDER BY tablename, policyname;
-"
-
-# ─────────────────────────────────────────────
-# STEP 8: Verify functions & triggers
-# ─────────────────────────────────────────────
-divider
-warn "Functions on NagaratharNexus-Dev:"
-psql "$TARGET_DB_URL" -c "
-SELECT routine_name, routine_type
-FROM information_schema.routines
-WHERE routine_schema = 'public'
-ORDER BY routine_name;
-"
-
-warn "Triggers on NagaratharNexus-Dev:"
-psql "$TARGET_DB_URL" -c "
-SELECT trigger_name, event_object_table, event_manipulation, action_timing
-FROM information_schema.triggers
-WHERE trigger_schema = 'public'
-ORDER BY event_object_table, trigger_name;
-"
-
-warn "Fixing SECURITY DEFINER on RPC functions..."
-psql "$TARGET_DB_URL" <<'EOF'
-ALTER FUNCTION public.search_profiles_v2 SECURITY DEFINER;
-ALTER FUNCTION public.search_profiles_v2 SET search_path = public;
-ALTER FUNCTION public.get_filter_metadata SECURITY DEFINER;
-ALTER FUNCTION public.get_filter_metadata SET search_path = public;
-EOF
-log "RPC function permissions fixed."
-
-warn "Restoring table grants..."
-psql "$TARGET_DB_URL" <<'EOF'
-GRANT USAGE ON SCHEMA public TO authenticated, anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, anon;
-EOF
-log "Grants restored."
-
-# ─────────────────────────────────────────────
-# CLEANUP
-# ─────────────────────────────────────────────
-divider
-rm -f "$DUMP_FILE"
-log "Dump file removed."
-
-divider
-echo -e "${GREEN}"
-echo "  ✔  SYNC COMPLETE!"
-echo "  NagaratharNexus-Dev is now a mirror of NagaratharNexus (prod)."
-echo -e "${NC}"
-echo "  Next steps:"
-echo "  1. Point app to dev:  ./switch_env.sh dev"
-echo "  2. Test your app"
-echo "  3. Switch back:       ./switch_env.sh prod"
+log "Sync completed."
+echo ""
+echo "Summary:"
+echo "  Env file: $ENV_FILE"
+echo "  Source  : $SOURCE_ENV"
+echo "  Target  : $TARGET_ENV"
+echo "  Mode    : $MODE"
+echo "  Auth    : $AUTH_MODE"
 divider
