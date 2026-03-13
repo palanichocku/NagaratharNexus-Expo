@@ -75,12 +75,12 @@ export default function AboutScreen() {
           />
 
           <View style={styles.profileContent}>
-            <Text style={styles.profileRole}>Founder Administrator</Text>
+            <Text style={styles.profileRole}>Founder & Platform Architect</Text>
             <Text style={styles.profileName}>Palaniappan Chockalingam</Text>
 
             <Text style={styles.body}>
-              Palaniappan Chockalingam is the Founder Administrator of Nagarathar
-              Nexus, a modern matrimonial platform built exclusively for the
+              Palaniappan Chockalingam is the Founder and Platform Architect of 
+              Nagarathar Nexus, a modern matrimonial platform built exclusively for the
               Nagarathar community.
             </Text>
 
@@ -108,12 +108,12 @@ export default function AboutScreen() {
           />
 
           <View style={styles.profileContent}>
-            <Text style={styles.profileRole}>Founder Moderator</Text>
+            <Text style={styles.profileRole}>Co-Founder & Community Director</Text>
             <Text style={styles.profileName}>Valli Vellayyan</Text>
 
             <Text style={styles.bodyLast}>
               This section is reserved to recognise the leadership and community
-              service of the Founder Moderator who helps support Nagarathar Nexus
+              service of the Co-Founder and Community Director who helps support Nagarathar Nexus
               and its members. Profile details will be added here shortly.
             </Text>
           </View>

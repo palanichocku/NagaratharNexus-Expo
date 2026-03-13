@@ -14,6 +14,7 @@ import { supabase } from '@/src/lib/supabase';
 import SlotCard from '@/src/components/moderator-calendar/SlotCard';
 import { moderatorCalendarService, type ModeratorSlot } from '@/src/services/moderatorCalendar.service';
 import { CANADA_TIMEZONE, toYMDInTimeZone } from '@/src/utils/timezone';
+import { useFocusEffect } from '@react-navigation/native';
 
 type Role = 'ADMIN' | 'MODERATOR' | 'USER';
 
@@ -82,6 +83,16 @@ export default function ModeratorChatScreen() {
     return unsubscribe;
   }, [load]);
 
+  useFocusEffect(
+    useCallback(() => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      setSelectedDay(today);
+      setRescheduleFromSlotId(null);
+    }, [])
+  );
+  
   const createDefaultDaySlots = async () => {
     try {
       setSaving(true);

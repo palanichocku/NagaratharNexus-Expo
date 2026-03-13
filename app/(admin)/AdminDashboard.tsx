@@ -250,6 +250,16 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (activeTab !== 'CALENDAR') return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    setCalendarDay(today);
+    setRescheduleFromSlotId(null);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'CALENDAR') return;
     loadCalendar();
   }, [activeTab, loadCalendar]);
 
@@ -258,8 +268,10 @@ export default function AdminDashboard() {
       if (activeTab === 'CALENDAR') {
         loadCalendar();
       }
+
     });
 
+    
     return unsubscribe;
   }, [activeTab, loadCalendar]);
 
