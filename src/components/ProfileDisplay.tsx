@@ -156,7 +156,7 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
 
   if (!profile) return null;
 
-  const displayProfile = {
+    const displayProfile = {
     ...profile,
 
     fullName: profile.fullName ?? profile.full_name ?? '',
@@ -170,14 +170,31 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
     currentState: profile.currentState ?? profile.current_state ?? null,
     currentCity: profile.currentCity ?? profile.current_city ?? '',
 
-    phone: profile.phone ?? '',
-    email: profile.email ?? '',
-    hidePhone: profile.hidePhone ?? profile.hide_phone ?? false,
-    hideEmail: profile.hideEmail ?? profile.hide_email ?? false,
+    // Contact fields: support both camelCase and DB-style names
+    phone:
+      profile.phone ??
+      profile.phone_number ??
+      profile.phoneNumber ??
+      '',
+    email:
+      profile.email ??
+      profile.email_address ??
+      profile.emailAddress ??
+      '',
+
+    // Privacy flags: support both camelCase and DB-style names
+    hidePhone:
+      profile.hidePhone ??
+      profile.hide_phone ??
+      false,
+    hideEmail:
+      profile.hideEmail ??
+      profile.hide_email ??
+      false,
 
     maritalStatus: profile.maritalStatus ?? profile.marital_status ?? null,
 
-    height: profile.height ?? '',
+    height: profile.height ?? profile.height_inches ?? '',
 
     profession: profile.profession ?? null,
     workplace: profile.workplace ?? '',
@@ -226,11 +243,12 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
     profilePhotoUrl: profile.profilePhotoUrl ?? profile.profile_photo_url ?? '',
   };
 
-  const canEditProfile =
-    (!!profile?.id && !!currentUserId && String(profile.id) === String(currentUserId)) ||
-    (!!currentUserEmail &&
-      String(currentUserEmail).toLowerCase() ===
-        String((profile as any)?.email || (displayProfile as any)?.email || '').toLowerCase());
+  
+    const canEditProfile =
+      (!!profile?.id && !!currentUserId && String(profile.id) === String(currentUserId)) ||
+      (!!currentUserEmail &&
+        String(currentUserEmail).toLowerCase() ===
+          String(displayProfile.email || '').toLowerCase());
 
   const isSelf = canEditProfile;
   const isStaff = currentUserRole === 'ADMIN' || currentUserRole === 'MODERATOR';
@@ -326,11 +344,15 @@ export const ProfileDisplay = ({ profile, onSaveSection }: any) => {
   };
 
   const renderViewValue = (field: ProfileFieldSchema, val: any) => {
-    if (!canViewPrivateContact && field.key === 'phone' && displayProfile.hidePhone) {
+
+    const isPhoneField = field.key === 'phone' || field.key === 'phone_number';
+    const isEmailField = field.key === 'email' || field.key === 'email_address';
+
+    if (!canViewPrivateContact && isPhoneField && displayProfile.hidePhone) {
       return <Text style={styles.privateValue}>[Private]</Text>;
     }
 
-    if (!canViewPrivateContact && field.key === 'email' && displayProfile.hideEmail) {
+    if (!canViewPrivateContact && isEmailField && displayProfile.hideEmail) {
       return <Text style={styles.privateValue}>[Private]</Text>;
     }
 

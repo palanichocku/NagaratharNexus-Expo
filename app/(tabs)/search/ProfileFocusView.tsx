@@ -15,18 +15,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { ProfileDisplay } from '../../../src/components/ProfileDisplay';
 import { useAppTheme } from '../../../src/theme/ThemeProvider';
 import { getProfileById } from '@/src/services/search.service';
+import { supabase } from '@/src/lib/supabase';
 
 interface ProfileFocusProps {
   profile: any;
-
   onNext: () => void;
   onPrev: () => void;
-
   onReport: () => void;
-
   canNext?: boolean;
   canPrev?: boolean;
-
   showNav?: boolean;
 }
 
@@ -73,8 +70,54 @@ export default function ProfileFocusView({
   const [fullProfile, setFullProfile] = useState<any>(null);
   const [loadingFull, setLoadingFull] = useState(false);
 
+  const [viewerUserId, setViewerUserId] = useState<string | null>(null);
+  const [viewerRole, setViewerRole] = useState<string>('USER');
+
   const prevAnim = usePressScale(!canPrev);
   const nextAnim = usePressScale(!canNext);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadViewer() {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!alive) return;
+
+        const uid = user?.id ?? null;
+        setViewerUserId(uid);
+
+        if (!uid) {
+          setViewerRole('USER');
+          return;
+        }
+
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', uid)
+          .maybeSingle();
+
+        if (!alive) return;
+
+        setViewerRole(String(p?.role || 'USER').toUpperCase());
+      } catch (e) {
+        console.warn('loadViewer failed', e);
+        if (alive) {
+          setViewerUserId(null);
+          setViewerRole('USER');
+        }
+      }
+    }
+
+    void loadViewer();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -97,10 +140,48 @@ export default function ProfileFocusView({
     }
 
     void hydrate();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [profileId]);
 
-  const displayProfile = fullProfile ?? profile;
+  const rawProfile = fullProfile ?? profile;
+
+  const isStaff = viewerRole === 'ADMIN' || viewerRole === 'MODERATOR';
+  const isOwnProfile =
+    !!viewerUserId &&
+    !!rawProfile?.id &&
+    String(viewerUserId) === String(rawProfile.id);
+
+  const canViewPrivateContact = isOwnProfile || isStaff;
+
+  const maskedProfile = useMemo(() => {
+    if (!rawProfile) return rawProfile;
+
+    const hidePhone = !!(rawProfile.hide_phone ?? rawProfile.hidePhone);
+    const hideEmail = !!(rawProfile.hide_email ?? rawProfile.hideEmail);
+
+    const next = { ...rawProfile };
+
+    if (!canViewPrivateContact && hidePhone) {
+      next.phone = '[Private]';
+      next.phone_number = '[Private]';
+      next.phoneNumber = '[Private]';
+    }
+
+    if (!canViewPrivateContact && hideEmail) {
+      next.email = '[Private]';
+      next.email_address = '[Private]';
+      next.emailAddress = '[Private]';
+    }
+
+    return next;
+  }, [rawProfile, canViewPrivateContact]);
+
+  useEffect(() => {
+    if (!rawProfile) return;
+
+  }, [rawProfile, maskedProfile, viewerUserId, viewerRole, isOwnProfile, canViewPrivateContact]);
 
   const handlePrev = useCallback(() => {
     if (!canPrev) return;
@@ -147,7 +228,7 @@ export default function ProfileFocusView({
               </Text>
             </View>
           ) : (
-            <ProfileDisplay profile={displayProfile} />
+            <ProfileDisplay profile={maskedProfile} />
           )}
 
           <TouchableOpacity style={styles.reportRow} onPress={onReport} activeOpacity={0.85}>
