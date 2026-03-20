@@ -6,7 +6,6 @@ import {
   StyleSheet,
   Switch,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   Platform,
   ScrollView,
@@ -16,19 +15,25 @@ import { supabase } from '@/src/lib/supabase';
 import { useRouter } from 'expo-router';
 import { useAppTheme } from '@/src/theme/ThemeProvider';
 import SignOutButton from '@/src/components/SignOutButton';
-
-type SettingField = 'hide_phone' | 'hide_email' | 'account_status';
+import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToast } from '@/src/ui/feedback/useToast';
 
 export default function SettingsScreen() {
   const { theme, themeName, setThemeName, availableThemes } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
+  const dialog = useDialog();
+  const toast = useToast();
 
   const [loading, setLoading] = useState(true);
   const [hidePhone, setHidePhone] = useState(true);
   const [hideEmail, setHideEmail] = useState(true);
   const [isProfileActive, setIsProfileActive] = useState(true);
-  const [savingKey, setSavingKey] = useState<SettingField | null>(null);
+
+  const [savingPrivacyKey, setSavingPrivacyKey] = useState<'hide_phone' | 'hide_email' | null>(
+    null
+  );
+  const [savingAccountStatus, setSavingAccountStatus] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -59,7 +64,10 @@ export default function SettingsScreen() {
         setIsProfileActive((data.account_status ?? 'ACTIVE') === 'ACTIVE');
       }
     } catch (e: any) {
-      Alert.alert('Unable to load settings', e?.message ?? 'Please try again.');
+      dialog.show({
+        title: 'Unable to load settings',
+        message: e?.message ?? 'Please try again.',
+      });
     } finally {
       setLoading(false);
     }
@@ -70,9 +78,15 @@ export default function SettingsScreen() {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (!user) return;
+    if (!user) {
+      dialog.show({
+        title: 'Session expired',
+        message: 'Please sign in again.',
+      });
+      return;
+    }
 
-    setSavingKey(field);
+    setSavingPrivacyKey(field);
 
     const prev = field === 'hide_phone' ? hidePhone : hideEmail;
 
@@ -83,13 +97,26 @@ export default function SettingsScreen() {
         .eq('id', user.id);
 
       if (error) throw error;
+
+      toast.show(
+        field === 'hide_phone'
+          ? value
+            ? 'Phone number hidden'
+            : 'Phone number visible'
+          : value
+            ? 'Email address hidden'
+            : 'Email address visible'
+      );
     } catch (e: any) {
       if (field === 'hide_phone') setHidePhone(prev);
       else setHideEmail(prev);
 
-      Alert.alert('Update failed', e?.message ?? 'Please try again.');
+      dialog.show({
+        title: 'Update failed',
+        message: e?.message ?? 'Please try again.',
+      });
     } finally {
-      setSavingKey(null);
+      setSavingPrivacyKey(null);
     }
   };
 
@@ -98,13 +125,19 @@ export default function SettingsScreen() {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (!user) return;
+    if (!user) {
+      dialog.show({
+        title: 'Session expired',
+        message: 'Please sign in again.',
+      });
+      return;
+    }
 
-    const nextStatus = nextActive ? 'ACTIVE' : 'INACTIVE';
     const prev = isProfileActive;
+    const nextStatus = nextActive ? 'ACTIVE' : 'INACTIVE';
 
     setIsProfileActive(nextActive);
-    setSavingKey('account_status');
+    setSavingAccountStatus(true);
 
     try {
       const { error } = await supabase
@@ -113,27 +146,35 @@ export default function SettingsScreen() {
         .eq('id', user.id);
 
       if (error) throw error;
+
+      toast.show(nextActive ? 'Profile is now active' : 'Profile is now inactive');
     } catch (e: any) {
       setIsProfileActive(prev);
-      Alert.alert('Update failed', e?.message ?? 'Please try again.');
+      dialog.show({
+        title: 'Update failed',
+        message: e?.message ?? 'Please try again.',
+      });
     } finally {
-      setSavingKey(null);
+      setSavingAccountStatus(false);
     }
   };
 
   const handleToggleProfileActive = (value: boolean) => {
-    const title = value ? 'Make profile active?' : 'Make profile inactive?';
-    const message = value
-      ? 'Your profile will appear in search and match discovery again.'
-      : 'Your profile will be hidden from search and match discovery until you turn it back on.';
+    if (savingAccountStatus) return;
 
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Confirm',
-        onPress: () => updateAccountStatus(value),
-      },
-    ]);
+    dialog.show({
+      title: value ? 'Make profile active?' : 'Make profile inactive?',
+      message: value
+        ? 'Your profile will appear in search and match discovery again.'
+        : 'Your profile will be hidden from search and match discovery until you turn it back on.',
+      actions: [
+        { label: 'Cancel', variant: 'secondary' },
+        {
+          label: 'Confirm',
+          onPress: () => updateAccountStatus(value),
+        },
+      ],
+    });
   };
 
   if (loading) {
@@ -244,7 +285,7 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.rowRight}>
-            {savingKey === 'hide_phone' ? (
+            {savingPrivacyKey === 'hide_phone' ? (
               <ActivityIndicator size="small" color={tint} />
             ) : (
               <Switch
@@ -272,7 +313,7 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.rowRight}>
-            {savingKey === 'hide_email' ? (
+            {savingPrivacyKey === 'hide_email' ? (
               <ActivityIndicator size="small" color={tint} />
             ) : (
               <Switch
@@ -302,11 +343,12 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.rowRight}>
-            {savingKey === 'account_status' ? (
+            {savingAccountStatus ? (
               <ActivityIndicator size="small" color={tint} />
             ) : (
               <Switch
                 value={isProfileActive}
+                disabled={savingAccountStatus}
                 onValueChange={handleToggleProfileActive}
               />
             )}

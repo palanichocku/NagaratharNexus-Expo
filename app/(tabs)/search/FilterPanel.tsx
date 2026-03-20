@@ -20,7 +20,7 @@ import FacetFilter from './components/FacetFilter';
 import { useAppTheme } from '../../../src/theme/ThemeProvider';
 
 // ✅ Kovil + Pirivu source-of-truth
-import { INTEREST_DATA, KOVIL_DATA, EDUCATION_DATA } from '../../../src/constants/appData';
+import { INTEREST_DATA, KOVIL_DATA, EDUCATION_DATA, MARITAL_STATUS_DATA } from '../../../src/constants/appData';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -93,6 +93,7 @@ function formatHeightSmart(inches: number): string {
   return `${ft}'${inch}"`;
 }
 
+
 /** ---------- encode/decode for excluded pairs ---------- */
 function encodeExcludePair(kovil: string, pirivu: string): string {
   return `${kovil}||${pirivu}`;
@@ -149,10 +150,32 @@ export default function FilterPanel({
   // ✅ Local interests list is canonical (fast + consistent)
   const interestOptions = useMemo(() => INTEREST_DATA || [], []);
 
+  const INTEREST_HINTS: Record<string, string> = {
+    'Fitness & Wellness': 'Gym, yoga, walking, running, pilates',
+    'Travel & Outdoors': 'Travel, hiking, camping, trekking',
+    'Food & Cooking': 'Cooking, baking, trying new cuisines',
+    'Arts & Creativity': 'Music, painting, photography, writing',
+    'Music & Entertainment': 'Music, movies, dance, concerts',
+    'Reading & Learning': 'Reading, learning, personal growth',
+    'Sports & Games': 'Cricket, tennis, chess, board games',
+    'Community & Service': 'Volunteering, mentoring, community involvement',
+    'Mindfulness & Spirituality': 'Meditation, reflection, spiritual activities',
+    'Home & Lifestyle': 'Gardening, homemaking, collecting, home projects',
+  };
+
+  const [openInterestHint, setOpenInterestHint] = useState<string | null>(null);
   const educationOptions = useMemo(
     () => (EDUCATION_DATA || []).map((x: any) => String(x?.value ?? x?.label ?? '')).filter(Boolean),
     [],
   );
+
+  const maritalStatusOptions = useMemo(
+  () =>
+    (MARITAL_STATUS_DATA || [])
+      .map((x: any) => String(x?.value ?? x?.label ?? ''))
+      .filter(Boolean),
+  [],
+);
 
   const [loading, setLoading] = useState(!globalMetadataCache);
   const [facets, setFacets] = useState<any>(
@@ -160,6 +183,7 @@ export default function FilterPanel({
       countries: [],
       education: educationOptions,
       interests: interestOptions,
+      maritalStatus: maritalStatusOptions,
     },
   );
 
@@ -201,6 +225,11 @@ export default function FilterPanel({
     [filters?.excludeKovilPirivu],
   );
 
+  const showInterestHint = useCallback((value: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setOpenInterestHint((prev) => (prev === value ? null : value));
+  }, []);
+
   const activeCount = useMemo(() => {
     let n = 0;
     if ((filters?.query || '').trim()) n += 1;
@@ -227,7 +256,7 @@ export default function FilterPanel({
 
   useEffect(() => {
     if (globalMetadataCache) {
-      setFacets({ ...globalMetadataCache, interests: interestOptions, education: educationOptions });
+      setFacets({ ...globalMetadataCache, interests: interestOptions, education: educationOptions, maritalStatus: maritalStatusOptions, });
       setLoading(false);
       return;
     }
@@ -235,7 +264,7 @@ export default function FilterPanel({
     const fetchMetadata = async () => {
       try {
         const data = await getFilterMetadata();
-        const merged = { ...data, interests: interestOptions, education: educationOptions };
+        const merged = { ...data, interests: interestOptions, education: educationOptions, maritalStatus: maritalStatusOptions,};
         globalMetadataCache = merged;
         setFacets(merged);
       } catch (e) {
@@ -280,7 +309,9 @@ export default function FilterPanel({
     onFilterChange(DEFAULT_FILTERS);
     setLocalQuery('');
     setOpenExcludeKovil(null);
+    setOpenInterestHint(null);
     setInterestLimitHit(false);
+    
   }, [onFilterChange]);
 
   const setAge = useCallback(
@@ -563,7 +594,7 @@ export default function FilterPanel({
               active={Array.isArray(filters?.excludeKovilPirivu) ? filters.excludeKovilPirivu.length : 0}
             >
               <Text style={styles.helperText}>
-                Exclude your own Kovil/Pirivu (and any others) so disallowed pairs don’t appear in results.
+                Your Kovil is already filtered. Exclude any other Kovil/Pirivu so disallowed pairs don’t appear in results.
               </Text>
 
               <View style={styles.chipWrap}>
@@ -641,13 +672,71 @@ export default function FilterPanel({
               )}
             </FilterSection>
 
+            <FilterSection id="marital" label="Marital Status" active={filters.maritalStatus?.length}>
+              <FacetFilter
+                options={facets.maritalStatus}
+                selectedValues={filters.maritalStatus || []}
+                onToggle={(v: string) => toggleMulti('maritalStatus', v)}
+              />
+            </FilterSection>
+
             {/* Interests */}
-            <FilterSection id="interests" label="Interests" active={filters?.interests?.length || 0}>
+            <FilterSection id="interests" label="Interests & Lifestyle" active={filters?.interests?.length || 0}>
               <Text style={styles.helperText}>
                 Pick up to {MAX_INTERESTS}. {selectedInterestCount}/{MAX_INTERESTS} selected.
               </Text>
-              {interestLimitHit ? <Text style={styles.limitText}>You can select up to {MAX_INTERESTS} interests.</Text> : null}
-              <FacetFilter options={facets.interests || []} selectedValues={filters?.interests || []} onToggle={(v: string) => toggleMulti('interests', v)} />
+              <Text style={styles.helperText}>
+                Tap to select. Press and hold a category to see examples.
+              </Text>
+
+              {interestLimitHit ? (
+                <Text style={styles.limitText}>You can select up to {MAX_INTERESTS} interests.</Text>
+              ) : null}
+
+              <View style={styles.chipWrap}>
+                {(facets.interests || []).map((item: string) => {
+                  const active = (filters?.interests || []).includes(item);
+                  const showingHint = openInterestHint === item;
+
+                  return (
+                    <TouchableOpacity
+                      key={item}
+                      accessibilityRole="button"
+                      delayLongPress={180}
+                      onPress={() => toggleMulti('interests', item)}
+                      onLongPress={() => showInterestHint(item)}
+                      style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
+                    >
+                      <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>
+                        {item}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {!!openInterestHint && (
+                <View style={styles.interestHintBubble}>
+                  <View style={styles.interestHintHeader}>
+                    <Text style={styles.interestHintTitle}>{openInterestHint}</Text>
+
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      onPress={() => {
+                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        setOpenInterestHint(null);
+                      }}
+                      style={styles.interestHintCloseBtn}
+                    >
+                      <Ionicons name="close" size={16} color={tokens.muted} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={styles.interestHintText}>
+                    {INTEREST_HINTS[openInterestHint] || 'Includes related activities within this category.'}
+                  </Text>
+                </View>
+              )}
             </FilterSection>
 
             {/* Education */}
@@ -869,5 +958,44 @@ function makeStyles(theme: any, t: any) {
       justifyContent: 'center',
     },
     bottomPillText: { color: t.primaryText, fontSize: 12, fontWeight: '900' },
+    interestHintBubble: {
+      marginTop: 12,
+      padding: 12,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: t.border,
+      backgroundColor: t.inputBg,
+      ...Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOpacity: 0.06,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+        },
+        android: { elevation: 1 },
+        web: { boxShadow: '0px 4px 14px rgba(0,0,0,0.06)' } as any,
+      }),
+    },
+    interestHintHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 6,
+    },
+    interestHintTitle: {
+      fontSize: 12,
+      fontWeight: '900',
+      color: t.text,
+    },
+    interestHintText: {
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '700',
+      color: t.muted,
+    },
+    interestHintCloseBtn: {
+      padding: 6,
+      borderRadius: 999,
+    },
   });
 }

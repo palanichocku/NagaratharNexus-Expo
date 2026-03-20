@@ -1,15 +1,11 @@
-// This is the root layout for the entire app. It handles global authentication state and
-// redirects users to the appropriate screens based on their status (e.g., onboarding, pending approval, main app).
-// It also wraps the app in a ThemeProvider for consistent theming across screens.
-// app/_layout.tsx
-
 import { useEffect, useRef, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { supabase } from '../src/lib/supabase';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { ThemeProvider, useAppTheme } from '../src/theme/ThemeProvider';
 import { AppDialogProvider } from '@/src/ui/feedback/AppDialogProvider';
 import { ToastProvider } from '@/src/ui/feedback/ToastProvider';
+import { getSystemConfig } from '../src/services/systemConfig.service';
 
 function RootLayoutInner() {
   const router = useRouter();
@@ -18,6 +14,7 @@ function RootLayoutInner() {
 
   const [isInitializing, setIsInitializing] = useState(true);
   const [, setSession] = useState<any>(null);
+  const [isRecoveryMode, setIsRecoveryMode] = useState(false);
 
   const segmentsRef = useRef<string[]>([]);
   useEffect(() => {
@@ -29,26 +26,13 @@ function RootLayoutInner() {
   useEffect(() => {
     let mounted = true;
 
-    const resolveAndRoute = async (nextSession: any) => {
+    const resolveAndRoute = async (nextSession: any, authEvent?: string) => {
       if (!mounted) return;
+
+      const config = await getSystemConfig();
 
       setSession(nextSession);
       didRouteRef.current = false;
-
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const url = window.location.href;
-        const isFlowUrl =
-          url.includes('access_token=') ||
-          url.includes('code=') ||
-          url.includes('type=recovery') ||
-          url.includes('type=signup') ||
-          url.includes('SetPassword');
-
-        if (isFlowUrl) {
-          console.log('🎯 Flow detected (Recovery/Invite). Cleaning URL tokens.');
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-      }
 
       const segs = segmentsRef.current;
       const routeNow = segs.join('/');
@@ -56,8 +40,44 @@ function RootLayoutInner() {
       const isPublicAuthPage = segs[0] === '(auth)' || !segs[0];
       const inTabs = segs[0] === '(tabs)';
       const inAdmin = segs[0] === '(admin)';
+      const onResetPassword = routeNow.includes('reset-password');
+      const onSetPassword = routeNow.includes('SetPassword');
+      const onVerifyEmail = routeNow.includes('VerifyEmail');
+      const onPendingApproval = routeNow.includes('PendingApproval');
+      const onMaintenance = routeNow.includes('maintenance');
 
-      // Not logged in
+      const shouldEnterRecoveryMode =
+        authEvent === 'PASSWORD_RECOVERY' || (!!nextSession && onResetPassword);
+
+      if (shouldEnterRecoveryMode) {
+        if (!isRecoveryMode) {
+          setIsRecoveryMode(true);
+        }
+
+        setIsInitializing(false);
+
+        if (!onResetPassword) {
+          didRouteRef.current = true;
+          router.replace('/reset-password');
+        }
+        return;
+      }
+
+      if (
+        authEvent === 'SIGNED_OUT' ||
+        authEvent === 'USER_UPDATED' ||
+        (authEvent === 'SIGNED_IN' && !onResetPassword)
+      ) {
+        if (isRecoveryMode) {
+          setIsRecoveryMode(false);
+        }
+      }
+
+      if (isRecoveryMode && onResetPassword) {
+        setIsInitializing(false);
+        return;
+      }
+
       if (!nextSession) {
         setIsInitializing(false);
         if (!isPublicAuthPage) {
@@ -66,16 +86,56 @@ function RootLayoutInner() {
         return;
       }
 
-      // ---------------------------------------------------
-      // 1) Fetch profile state safely
-      // ---------------------------------------------------
+      if (config.maintenanceMode) {
+        let fetchedRoleDuringMaintenance: string | null = null;
+
+        try {
+          const { data: roleRow } = await supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', nextSession.user.id)
+            .maybeSingle();
+
+          fetchedRoleDuringMaintenance = roleRow?.role ?? null;
+        } catch {
+          // silent fallback
+        }
+
+        const maintenanceRole = (
+          fetchedRoleDuringMaintenance ||
+          nextSession.user.user_metadata?.role ||
+          'USER'
+        )
+          .toString()
+          .toUpperCase();
+
+        const isStaffDuringMaintenance =
+          maintenanceRole === 'ADMIN' || maintenanceRole === 'MODERATOR';
+
+        if (!isStaffDuringMaintenance) {
+          setIsInitializing(false);
+
+          if (!onMaintenance && !onResetPassword && !onVerifyEmail && !onSetPassword) {
+            didRouteRef.current = true;
+            router.replace('/(auth)/maintenance');
+          }
+
+          return;
+        }
+      }
+
+      if (onSetPassword) {
+        setIsInitializing(false);
+        return;
+      }
+
       let profileData: any = null;
       let profileError: any = null;
 
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('is_approved, is_submitted')
+          .select('id, is_approved, is_submitted')
           .eq('id', nextSession.user.id)
           .maybeSingle();
 
@@ -85,9 +145,6 @@ function RootLayoutInner() {
         console.warn('⚠️ Profile query crashed:', e);
       }
 
-      // ---------------------------------------------------
-      // 2) Fetch role separately and safely
-      // ---------------------------------------------------
       let fetchedRole: string | null = null;
 
       try {
@@ -106,17 +163,10 @@ function RootLayoutInner() {
         console.warn('⚠️ Role query crashed. Falling back to metadata/default:', e);
       }
 
-      const finalRole = (
-        fetchedRole ||
-        nextSession.user.user_metadata?.role ||
-        'USER'
-      )
+      const finalRole = (fetchedRole || nextSession.user.user_metadata?.role || 'USER')
         .toString()
         .toUpperCase();
 
-      // ---------------------------------------------------
-      // 3) Only profile query failure is critical enough to block
-      // ---------------------------------------------------
       if (profileError) {
         console.error('Critical profile fetch failure. Logging out:', profileError?.message);
         await supabase.auth.signOut();
@@ -124,7 +174,10 @@ function RootLayoutInner() {
         return;
       }
 
+      const hasProfile = !!profileData?.id;
+
       const profile = {
+        hasProfile,
         is_approved: !!profileData?.is_approved,
         is_submitted: !!profileData?.is_submitted,
         role: finalRole,
@@ -138,7 +191,6 @@ function RootLayoutInner() {
         return;
       }
 
-      // Staff route
       if (isStaff) {
         if (!inAdmin) {
           didRouteRef.current = true;
@@ -148,9 +200,27 @@ function RootLayoutInner() {
         return;
       }
 
-      // Email verification route
+      // Registration gate:
+      // if registrations are closed, block any non-staff user who does not yet have a profile.
+      // This closes email signup, Google signup, deep links, and onboarding leakage with one rule.
+      if (!config.allowRegistration && !profile.hasProfile) {
+        try {
+          await supabase.auth.signOut();
+        } catch {
+          // ignore
+        }
+
+        setIsInitializing(false);
+
+        if (!routeNow.includes('login')) {
+          didRouteRef.current = true;
+          router.replace('/(auth)/login');
+        }
+        return;
+      }
+
       if (!isEmailVerified) {
-        if (!routeNow.includes('VerifyEmail')) {
+        if (!onVerifyEmail) {
           didRouteRef.current = true;
           router.replace('/(auth)/VerifyEmail');
         }
@@ -158,7 +228,6 @@ function RootLayoutInner() {
         return;
       }
 
-      // New verified user with no onboarding submission
       if (!profile.is_submitted) {
         if (!routeNow.includes('Onboarding')) {
           didRouteRef.current = true;
@@ -168,9 +237,8 @@ function RootLayoutInner() {
         return;
       }
 
-      // Submitted but pending moderation/approval
-      if (!profile.is_approved) {
-        if (!routeNow.includes('PendingApproval')) {
+      if (config.requireApproval && !profile.is_approved) {
+        if (!onPendingApproval) {
           didRouteRef.current = true;
           router.replace('/(auth)/PendingApproval');
         }
@@ -178,7 +246,6 @@ function RootLayoutInner() {
         return;
       }
 
-      // Approved normal user
       if (!inTabs) {
         didRouteRef.current = true;
         router.replace('/(tabs)/search');
@@ -188,20 +255,20 @@ function RootLayoutInner() {
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      void resolveAndRoute(session);
+      void resolveAndRoute(session, 'INITIAL_SESSION');
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      void resolveAndRoute(nextSession);
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      void resolveAndRoute(nextSession, event);
     });
 
     return () => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [router]);
+  }, [router, isRecoveryMode]);
 
   if (isInitializing) {
     return (

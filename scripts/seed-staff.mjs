@@ -1,6 +1,16 @@
-// Run it in command: 
-// npm i -D dotenv
-// node scripts/seed-staff.mjs
+// scripts/seed-staff.mjs
+// Usage:
+//   node scripts/seed-staff.mjs --email mod2@nexus.com --password 'World@2026' --name 'Seed Moderator2' --role MODERATOR
+// Run from Project Home:
+//  node scripts/seed-staff.mjs \
+//    --email mod2@nexus.com \
+//    --password 'World@2026' \
+//    --name 'Seed Moderator2' \
+//    --role MODERATOR
+// Env required:
+//   SUPABASE_URL=...
+//   SUPABASE_SERVICE_ROLE_KEY=...
+
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
@@ -16,27 +26,72 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// ✅ EDIT THESE
-const STAFF = [
-  {
-    email: 'admin1@nexus.com',
-    password: 'password123',
-    full_name: 'Seed Admin1',
-    role: 'ADMIN',
-  },
-  {
-    email: 'mod1@nexus.com',
-    password: 'password123',
-    full_name: 'Seed Moderator1',
-    role: 'MODERATOR',
-  },
-];
+function getArg(name) {
+  const idx = process.argv.indexOf(`--${name}`);
+  if (idx === -1) return undefined;
+  return process.argv[idx + 1];
+}
+
+function requireArg(name) {
+  const value = getArg(name);
+  if (!value) {
+    console.error(`Missing required argument: --${name}`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function normalizeRole(role) {
+  const value = String(role || '').trim().toUpperCase();
+  if (!['ADMIN', 'MODERATOR'].includes(value)) {
+    console.error(`Invalid --role "${role}". Expected ADMIN or MODERATOR.`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function validateEmail(email) {
+  const value = String(email || '').trim().toLowerCase();
+  const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  if (!ok) {
+    console.error(`Invalid --email "${email}"`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function validatePassword(password) {
+  const value = String(password || '');
+  if (value.length < 8) {
+    console.error('Invalid --password. Use at least 8 characters.');
+    process.exit(1);
+  }
+  return value;
+}
 
 async function findAuthUserByEmail(email) {
-  // Supabase Admin list is paged; this is usually enough for small projects
-  const { data, error } = await sb.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (error) throw error;
-  return data.users.find((u) => (u.email || '').toLowerCase() === email.toLowerCase()) || null;
+  let page = 1;
+
+  while (true) {
+    const { data, error } = await sb.auth.admin.listUsers({
+      page,
+      perPage: 1000,
+    });
+
+    if (error) throw error;
+
+    const found =
+      data?.users?.find(
+        (u) => (u.email || '').toLowerCase() === email.toLowerCase()
+      ) || null;
+
+    if (found) return found;
+
+    if (!data?.users?.length || data.users.length < 1000) break;
+    page += 1;
+  }
+
+  return null;
 }
 
 async function ensureStaffUser({ email, password, full_name, role }) {
@@ -48,34 +103,34 @@ async function ensureStaffUser({ email, password, full_name, role }) {
       password,
       email_confirm: true,
       user_metadata: { full_name },
-      app_metadata: { role }, // reference only; still authorize via DB
+      app_metadata: { role }, // reference only; DB remains source of truth
     });
+
     if (error) throw error;
     user = data.user;
     console.log(`✅ Created auth user: ${email} (${role})`);
   } else {
-    // Optional: enforce password & metadata on rerun
     const { error } = await sb.auth.admin.updateUserById(user.id, {
       password,
       email_confirm: true,
       user_metadata: { ...(user.user_metadata ?? {}), full_name },
       app_metadata: { ...(user.app_metadata ?? {}), role },
     });
+
     if (error) throw error;
     console.log(`ℹ️ Updated auth user: ${email} (${role})`);
   }
 
-  // ✅ profiles: your schema requires full_name NOT NULL, role has check constraint
   const { error: profileErr } = await sb
     .from('profiles')
     .upsert(
       {
-        id: user.id,              // IMPORTANT: auth.users.id == profiles.id
+        id: user.id,
         email,
         full_name,
-        role,                     // 'ADMIN' | 'MODERATOR'
-        is_approved: true,        // so they can access immediately
-        is_submitted: false,      // staff don't need profile submission
+        role,
+        is_approved: true,
+        is_submitted: false,
         account_status: 'ACTIVE',
         hide_phone: true,
         hide_email: true,
@@ -87,7 +142,6 @@ async function ensureStaffUser({ email, password, full_name, role }) {
   if (profileErr) throw profileErr;
   console.log(`✅ Upserted profiles: ${email} -> ${role}`);
 
-  // ✅ user_roles: keep in sync with profiles.role
   const { error: roleErr } = await sb
     .from('user_roles')
     .upsert(
@@ -100,13 +154,22 @@ async function ensureStaffUser({ email, password, full_name, role }) {
 }
 
 async function main() {
-  for (const s of STAFF) {
-    await ensureStaffUser(s);
-  }
-  console.log('🎉 Done seeding staff.');
+  const email = validateEmail(requireArg('email'));
+  const password = validatePassword(requireArg('password'));
+  const full_name = requireArg('name');
+  const role = normalizeRole(requireArg('role'));
+
+  await ensureStaffUser({
+    email,
+    password,
+    full_name,
+    role,
+  });
+
+  console.log('🎉 Done seeding staff user.');
 }
 
 main().catch((e) => {
-  console.error('❌ Seed failed:', e);
+  console.error('❌ Seed failed:', e?.message || e);
   process.exit(1);
 });

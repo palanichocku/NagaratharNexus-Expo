@@ -14,7 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Dropdown, MultiSelect } from 'react-native-element-dropdown';
+import { Dropdown } from 'react-native-element-dropdown';
 import { Country, State, City } from 'country-state-city';
 
 import { supabase } from '../../src/lib/supabase';
@@ -27,6 +27,7 @@ import { mapAuthError } from '@/src/features/auth/authMessageMapper';
 import StatusBanner from '@/src/components/ui/StatusBanner';
 import SignOutButton from '../../src/components/SignOutButton';
 import SuggestionInput from '@/src/components/form/SuggestionInput';
+import { getSystemConfig } from '../../src/services/systemConfig.service';
 
 import {
   GENDER_DATA,
@@ -46,8 +47,8 @@ import {
 
 const TOTAL_STEPS = 8;
 const DRAFT_KEY = 'NN_ONBOARDING_DRAFT_V2';
-const SIB_MARITAL_DATA = [...MARITAL_STATUS_DATA, { label: 'Married', value: 'Married' }];
-const OCC_DATA = [...OCCUPATION_DATA, { label: 'Student', value: 'Student' }];
+const SIB_MARITAL_DATA = [...MARITAL_STATUS_DATA];
+const OCC_DATA = [...OCCUPATION_DATA];
 
 const INITIAL_FORM_DATA = {
   fullName: '',
@@ -107,6 +108,19 @@ const REQUIRED_BY_STEP: Record<number, string[]> = {
   4: ['kovil', 'rasi', 'star', 'nativePlace', 'familyInitials'],
   5: ['fatherName', 'motherName'],
   6: ['profilePhotoUrl'],
+};
+
+const INTEREST_HINTS: Record<string, string> = {
+  'Fitness & Wellness': 'Gym, yoga, walking, running, pilates',
+  'Travel & Outdoors': 'Travel, hiking, camping, trekking',
+  'Food & Cooking': 'Cooking, baking, trying new cuisines',
+  'Arts & Creativity': 'Music, painting, photography, writing',
+  'Music & Entertainment': 'Music, movies, dance, concerts',
+  'Reading & Learning': 'Reading, learning, personal growth',
+  'Sports & Games': 'Cricket, tennis, chess, board games',
+  'Community & Service': 'Volunteering, mentoring, community involvement',
+  'Mindfulness & Spirituality': 'Meditation, reflection, spiritual activities',
+  'Home & Lifestyle': 'Gardening, homemaking, collecting, home projects',
 };
 
 function isBlank(value: unknown) {
@@ -226,6 +240,7 @@ export default function Onboarding() {
   const [draftRestored, setDraftRestored] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [statusTone, setStatusTone] = useState<'info' | 'success' | 'error' | 'warning'>('info');
+  const [openInterestHint, setOpenInterestHint] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -427,6 +442,7 @@ export default function Onboarding() {
               setMissing({});
               setFilterCodes({ country: '', state: '' });
               setDraftRestored(false);
+              setOpenInterestHint(null);
               setStatusMessage('Your draft has been cleared. You are back at Step 1.');
               setStatusTone('success');
               toast.show('Draft cleared successfully.', 'success');
@@ -523,6 +539,7 @@ export default function Onboarding() {
   };
 
   const handleSubmit = async () => {
+    const config = await getSystemConfig();
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -583,7 +600,7 @@ export default function Onboarding() {
         hide_phone: false,
         hide_email: false,
         is_submitted: true,
-        is_approved: false,
+        is_approved: !config.requireApproval,
         updated_at: new Date().toISOString(),
       };
 
@@ -593,7 +610,12 @@ export default function Onboarding() {
       await AsyncStorage.removeItem(DRAFT_KEY);
       setPhotoPreviewUri('');
       toast.show('Profile submitted successfully.', 'success');
-      router.replace('/(auth)/PendingApproval');
+
+      if (config.requireApproval) {
+        router.replace('/(auth)/PendingApproval');
+      } else {
+        router.replace('/(tabs)/search');
+      }
     } catch (e: any) {
       console.error('Submission Error:', e);
       const ui = mapAuthError(e, 'submit');
@@ -605,6 +627,20 @@ export default function Onboarding() {
     } finally {
       setLoading(false);
     }
+  };
+
+    const toggleInterest = (interest: string) => {
+    setFormData((prev: any) => {
+      const current = Array.isArray(prev.interests) ? prev.interests : [];
+      const exists = current.includes(interest);
+
+      return {
+        ...prev,
+        interests: exists
+          ? current.filter((item: string) => item !== interest)
+          : [...current, interest],
+      };
+    });
   };
 
   const nextStep = () => {
@@ -945,9 +981,18 @@ export default function Onboarding() {
                         selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
                         value={edu.level}
                         onChange={(item: any) => {
-                          const updated = [...formData.education_history];
-                          updated[i].level = item.value;
-                          setFormData((prev: any) => ({ ...prev, education_history: updated }));
+                          setFormData((prev: any) => {
+                            const updated = [...(prev.education_history || [])];
+                            const previousLevel = updated[i]?.level || '';
+
+                            updated[i] = {
+                              ...updated[i],
+                              level: item.value,
+                              field: previousLevel !== item.value ? '' : updated[i]?.field || '',
+                            };
+
+                            return { ...prev, education_history: updated };
+                          });
                         }}
                       />
 
@@ -981,8 +1026,23 @@ export default function Onboarding() {
 
                     <View style={{ marginTop: 10 }}>
                       <SuggestionInput
+                        key={`${i}-${edu.level}`}
                         value={edu.field || ''}
-                        placeholder="Field of study"
+                        placeholder="Type or choose a field of study"
+                        suggestions={fieldSuggestions}
+                        theme={theme}
+                        onChange={(v) => {
+                          const updated = [...formData.education_history];
+                          updated[i].field = v;
+                          setFormData((prev: any) => ({ ...prev, education_history: updated }));
+                        }}
+                      />
+                    </View>
+
+                    <View style={{ marginTop: 10 }}>
+                      <SuggestionInput
+                        value={edu.field || ''}
+                        placeholder="Type or choose a field of study"
                         suggestions={fieldSuggestions}
                         theme={theme}
                         onChange={(v) => {
@@ -1337,22 +1397,88 @@ export default function Onboarding() {
 
           {step === 7 && (
             <View>
-              <Text style={styles.label}>Interests</Text>
-              <MultiSelect
-                style={styles.dropdown}
-                data={INTEREST_DATA.map((i) => ({ label: i, value: i }))}
-                labelField="label"
-                valueField="value"
-                placeholder="Select your interests"
-                placeholderStyle={{ color: theme.colors.mutedText, fontWeight: '700' }}
-                selectedTextStyle={{ color: theme.colors.text, fontWeight: '800' }}
-                value={formData.interests}
-                onChange={(item: any) =>
-                  setFormData((prev: any) => ({ ...prev, interests: item }))
-                }
-                selectedStyle={styles.selectedChip}
-                activeColor={theme.colors.surface}
-              />
+              <Text style={styles.label}>Interests & Lifestyle</Text>
+
+              <Text style={styles.helperText}>
+                Choose a few broad lifestyle categories that reflect your interests. Tap a pill to select it,
+                or tap the info icon to see examples.
+              </Text>
+
+              <View style={styles.interestHintChipWrap}>
+                {INTEREST_DATA.map((interest) => {
+                  const active =
+                    Array.isArray(formData.interests) &&
+                    formData.interests.includes(interest);
+                  const showingHint = openInterestHint === interest;
+
+                  return (
+                    <View
+                      key={interest}
+                      style={[
+                        styles.interestHintChip,
+                        active && styles.interestHintChipActive,
+                        showingHint && styles.interestHintChipOpen,
+                      ]}
+                    >
+                      <TouchableOpacity
+                        onPress={() => toggleInterest(interest)}
+                        activeOpacity={0.85}
+                        style={styles.interestChipMainTap}
+                      >
+                        <Text
+                          style={[
+                            styles.interestHintChipText,
+                            active && styles.interestHintChipTextActive,
+                          ]}
+                        >
+                          {interest}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() =>
+                          setOpenInterestHint((prev) =>
+                            prev === interest ? null : interest,
+                          )
+                        }
+                        activeOpacity={0.85}
+                        style={styles.interestInfoBtn}
+                      >
+                        <Ionicons
+                          name="information-circle-outline"
+                          size={14}
+                          color={
+                            active
+                              ? theme.colors.primaryText
+                              : theme.colors.mutedText
+                          }
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {!!openInterestHint && (
+                <View style={styles.interestHintBubble}>
+                  <View style={styles.interestHintHeader}>
+                    <Text style={styles.interestHintTitle}>{openInterestHint}</Text>
+
+                    <TouchableOpacity
+                      onPress={() => setOpenInterestHint(null)}
+                      style={styles.interestHintCloseBtn}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="close" size={16} color={theme.colors.mutedText} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={styles.interestHintText}>
+                    {INTEREST_HINTS[openInterestHint] ||
+                      'This category includes related hobbies and activities.'}
+                  </Text>
+                </View>
+              )}
 
               <ExpectationsQuestionnaire
                 value={formData.expectations}
@@ -1702,5 +1828,89 @@ function makeStyles(theme: any) {
       marginLeft: 4,
       letterSpacing: 0.6,
     },
+    interestHintChipWrap: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: 8,
+  marginTop: 12,
+  marginBottom: 8,
+},
+
+interestHintChip: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 12,
+  paddingVertical: 8,
+  borderRadius: 999,
+  borderWidth: 1,
+  borderColor: theme.colors.border,
+  backgroundColor: theme.colors.surface,
+},
+
+interestHintChipActive: {
+  backgroundColor: theme.colors.primary,
+  borderColor: theme.colors.primary,
+},
+
+interestHintChipOpen: {
+  borderColor: theme.colors.primary,
+},
+
+interestHintChipText: {
+  fontSize: 12,
+  fontWeight: '800',
+  color: theme.colors.text,
+},
+
+interestHintChipTextActive: {
+  color: theme.colors.primaryText,
+},
+
+interestHintBubble: {
+  marginTop: 8,
+  marginBottom: 16,
+  padding: 12,
+  borderRadius: r.card,
+  borderWidth: 1,
+  borderColor: theme.colors.border,
+  backgroundColor: theme.colors.surface,
+},
+
+interestHintHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginBottom: 6,
+},
+
+interestHintTitle: {
+  fontSize: 12,
+  fontWeight: '900',
+  color: theme.colors.text,
+},
+
+interestHintText: {
+  fontSize: 12,
+  lineHeight: 18,
+  fontWeight: '700',
+  color: theme.colors.mutedText,
+},
+
+interestHintCloseBtn: {
+  padding: 6,
+  borderRadius: 999,
+},
+
+interestChipMainTap: {
+  flexDirection: 'row',
+  alignItems: 'center',
+},
+
+interestInfoBtn: {
+  marginLeft: 6,
+  paddingLeft: 2,
+  paddingVertical: 2,
+},
+
   });
 }

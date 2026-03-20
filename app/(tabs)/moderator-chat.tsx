@@ -12,20 +12,51 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/src/lib/supabase';
 import SlotCard from '@/src/components/moderator-calendar/SlotCard';
-import { moderatorCalendarService, type ModeratorSlot } from '@/src/services/moderatorCalendar.service';
+import {
+  moderatorCalendarService,
+  type ModeratorSlot,
+  type ModeratorDirectoryItem,
+} from '@/src/services/moderatorCalendar.service';
 import { CANADA_TIMEZONE, toYMDInTimeZone } from '@/src/utils/timezone';
 import { useFocusEffect } from '@react-navigation/native';
 
 type Role = 'ADMIN' | 'MODERATOR' | 'USER';
+
+const MAX_DAYS_AHEAD = 28;
+
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function isBeforeDay(a: Date, b: Date) {
+  return startOfDay(a).getTime() < startOfDay(b).getTime();
+}
+
+function isAfterDay(a: Date, b: Date) {
+  return startOfDay(a).getTime() > startOfDay(b).getTime();
+}
 
 export default function ModeratorChatScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [role, setRole] = useState<Role>('USER');
   const [userId, setUserId] = useState<string | null>(null);
-  const [selectedDay, setSelectedDay] = useState(() => new Date());
+  const [selectedDay, setSelectedDay] = useState(() => startOfDay(new Date()));
   const [slots, setSlots] = useState<ModeratorSlot[]>([]);
   const [rescheduleFromSlotId, setRescheduleFromSlotId] = useState<string | null>(null);
+  const [moderators, setModerators] = useState<ModeratorDirectoryItem[]>([]);
+  const [selectedModeratorId, setSelectedModeratorId] = useState<string | null>(null);
+
+  const today = useMemo(() => startOfDay(new Date()), []);
+  const maxDay = useMemo(() => startOfDay(addDays(new Date(), MAX_DAYS_AHEAD)), []);
 
   const isModerator = role === 'MODERATOR' || role === 'ADMIN';
 
@@ -33,6 +64,14 @@ export default function ModeratorChatScreen() {
     () => toYMDInTimeZone(selectedDay, CANADA_TIMEZONE),
     [selectedDay]
   );
+
+  const selectedModerator = useMemo(
+    () => moderators.find((m) => m.id === selectedModeratorId) ?? null,
+    [moderators, selectedModeratorId]
+  );
+
+  const canGoPrev = useMemo(() => !isBeforeDay(addDays(selectedDay, -1), today), [selectedDay, today]);
+  const canGoNext = useMemo(() => !isAfterDay(addDays(selectedDay, 1), maxDay), [selectedDay, maxDay]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,7 +89,9 @@ export default function ModeratorChatScreen() {
         .single();
 
       if (profileError) throw profileError;
-      setRole((profile?.role ?? 'USER').toUpperCase() as Role);
+
+      const nextRole = (profile?.role ?? 'USER').toUpperCase() as Role;
+      setRole(nextRole);
 
       const start = new Date(selectedDay);
       start.setHours(0, 0, 0, 0);
@@ -59,7 +100,33 @@ export default function ModeratorChatScreen() {
       end.setDate(end.getDate() + 1);
       end.setHours(0, 0, 0, 0);
 
-      const data = await moderatorCalendarService.getSlotsForRange(
+      if (nextRole === 'MODERATOR' || nextRole === 'ADMIN') {
+        const data = await moderatorCalendarService.getMyModeratorSlotsForRange(
+          start.toISOString(),
+          end.toISOString()
+        );
+        setSlots(data);
+        setSelectedModeratorId(authUser.id);
+        return;
+      }
+
+      const moderatorList = await moderatorCalendarService.getActiveModerators();
+      setModerators(moderatorList);
+
+      const effectiveModeratorId =
+        selectedModeratorId && moderatorList.some((m) => m.id === selectedModeratorId)
+          ? selectedModeratorId
+          : moderatorList[0]?.id ?? null;
+
+      setSelectedModeratorId(effectiveModeratorId);
+
+      if (!effectiveModeratorId) {
+        setSlots([]);
+        return;
+      }
+
+      const data = await moderatorCalendarService.getSlotsForModeratorRange(
+        effectiveModeratorId,
         start.toISOString(),
         end.toISOString()
       );
@@ -70,7 +137,7 @@ export default function ModeratorChatScreen() {
     } finally {
       setLoading(false);
     }
-  }, [selectedDay]);
+  }, [selectedDay, selectedModeratorId]);
 
   useEffect(() => {
     load();
@@ -85,18 +152,30 @@ export default function ModeratorChatScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      setSelectedDay(today);
+      setSelectedDay(startOfDay(new Date()));
       setRescheduleFromSlotId(null);
     }, [])
   );
-  
+
   const createDefaultDaySlots = async () => {
     try {
+      if (isBeforeDay(selectedDay, today)) {
+        Alert.alert('Invalid day', 'You can only open slots from today onward.');
+        return;
+      }
+
+      if (isAfterDay(selectedDay, maxDay)) {
+        Alert.alert('Invalid day', 'You can only open slots up to 4 weeks ahead.');
+        return;
+      }
+
       setSaving(true);
-      await moderatorCalendarService.createSlotsForDay(dayLabel, '09:00', '17:00', CANADA_TIMEZONE);
+      await moderatorCalendarService.createSlotsForDay(
+        dayLabel,
+        '09:00',
+        '17:00',
+        CANADA_TIMEZONE
+      );
       await load();
     } catch (e: any) {
       Alert.alert('Unable to create slots', e.message ?? 'Please try again');
@@ -140,9 +219,25 @@ export default function ModeratorChatScreen() {
     }
   };
 
+  const deleteSlot = async (slotId: string) => {
+    try {
+      setSaving(true);
+      await moderatorCalendarService.deleteSlot(slotId);
+      await load();
+      Alert.alert('Deleted', 'The slot has been removed.');
+    } catch (e: any) {
+      Alert.alert('Unable to delete slot', e.message ?? 'Please try again');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const shiftDay = (delta: number) => {
-    const next = new Date(selectedDay);
-    next.setDate(next.getDate() + delta);
+    const next = addDays(selectedDay, delta);
+
+    if (isBeforeDay(next, today)) return;
+    if (isAfterDay(next, maxDay)) return;
+
     setSelectedDay(next);
   };
 
@@ -150,7 +245,7 @@ export default function ModeratorChatScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.header}>
-          <View>
+          <View style={styles.headerCopy}>
             <Text style={styles.title}>Chat with Moderator</Text>
             <Text style={styles.subtitle}>
               Canada, IST, and GMT times shown together
@@ -165,13 +260,67 @@ export default function ModeratorChatScreen() {
           ) : null}
         </View>
 
+        {!isModerator ? (
+          <View style={styles.moderatorSection}>
+            <Text style={styles.sectionLabel}>Choose Moderator</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.moderatorPillRow}
+            >
+              {moderators.map((moderator) => {
+                const active = moderator.id === selectedModeratorId;
+
+                return (
+                  <TouchableOpacity
+                    key={moderator.id}
+                    style={[styles.moderatorPill, active && styles.moderatorPillActive]}
+                    onPress={() => {
+                      setSelectedModeratorId(moderator.id);
+                      setRescheduleFromSlotId(null);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.moderatorPillText,
+                        active && styles.moderatorPillTextActive,
+                      ]}
+                    >
+                      {moderator.full_name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <Text style={styles.helperText}>
+              {selectedModerator
+                ? `Showing ${selectedModerator.full_name}'s calendar`
+                : 'No moderators available right now'}
+            </Text>
+          </View>
+        ) : null}
+
         <View style={styles.dayBar}>
-          <TouchableOpacity onPress={() => shiftDay(-1)} style={styles.dayArrow}>
-            <Ionicons name="chevron-back" size={18} color="#111827" />
+          <TouchableOpacity
+            onPress={() => shiftDay(-1)}
+            style={[styles.dayArrow, !canGoPrev && styles.dayArrowDisabled]}
+            disabled={!canGoPrev}
+          >
+            <Ionicons name="chevron-back" size={18} color={canGoPrev ? '#111827' : '#9CA3AF'} />
           </TouchableOpacity>
-          <Text style={styles.dayText}>{dayLabel}</Text>
-          <TouchableOpacity onPress={() => shiftDay(1)} style={styles.dayArrow}>
-            <Ionicons name="chevron-forward" size={18} color="#111827" />
+
+          <View style={styles.dayTextWrap}>
+            <Text style={styles.dayText}>{dayLabel}</Text>
+            <Text style={styles.dayHint}>Available from today through 4 weeks ahead</Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => shiftDay(1)}
+            style={[styles.dayArrow, !canGoNext && styles.dayArrowDisabled]}
+            disabled={!canGoNext}
+          >
+            <Ionicons name="chevron-forward" size={18} color={canGoNext ? '#111827' : '#9CA3AF'} />
           </TouchableOpacity>
         </View>
 
@@ -212,6 +361,7 @@ export default function ModeratorChatScreen() {
                     onBook={() => bookSlot(slot.id)}
                     onCancel={() => cancelSlot(slot.id)}
                     onReschedule={() => setRescheduleFromSlotId(slot.id)}
+                    onDelete={() => deleteSlot(slot.id)}
                   />
                 );
               })
@@ -239,6 +389,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  headerCopy: {
+    flex: 1,
+  },
   title: { fontSize: 24, fontWeight: '800', color: '#111827' },
   subtitle: { fontSize: 13, color: '#6B7280', marginTop: 4 },
   createBtn: {
@@ -253,6 +406,45 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   createBtnText: { fontWeight: '700', color: '#111827' },
+
+  moderatorSection: {
+    marginBottom: 14,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  moderatorPillRow: {
+    gap: 8,
+    paddingRight: 10,
+  },
+  moderatorPill: {
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  moderatorPillActive: {
+    backgroundColor: '#111827',
+    borderColor: '#111827',
+  },
+  moderatorPillText: {
+    color: '#111827',
+    fontWeight: '700',
+  },
+  moderatorPillTextActive: {
+    color: '#FFF',
+  },
+  helperText: {
+    marginTop: 8,
+    color: '#6B7280',
+    fontSize: 13,
+  },
+
   dayBar: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -267,7 +459,19 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     padding: 8,
   },
+  dayArrowDisabled: {
+    opacity: 0.5,
+  },
+  dayTextWrap: {
+    alignItems: 'center',
+  },
   dayText: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  dayHint: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#6B7280',
+  },
+
   banner: {
     marginBottom: 12,
     borderRadius: 14,
@@ -281,6 +485,7 @@ const styles = StyleSheet.create({
   },
   bannerText: { color: '#92400E', fontWeight: '600', flex: 1, marginRight: 10 },
   bannerLink: { color: '#92400E', fontWeight: '800' },
+
   listContent: { paddingBottom: 40 },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyCard: {
@@ -292,6 +497,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 18, fontWeight: '800', color: '#111827' },
   emptySub: { marginTop: 6, color: '#6B7280', lineHeight: 20 },
+
   savingOverlay: {
     position: 'absolute',
     right: 16,

@@ -49,20 +49,11 @@ export const RESIDENT_STATUS_DATA = [
 ];
 
 export const EDUCATION_DATA = [
-  { label: 'Ph.D', value: 'Ph.D' }, 
-  { label: "Master's", value: "Master's" },
   { label: 'High School', value: 'High School' }, 
   { label: 'Diploma', value: 'Diploma' },
   { label: "Bachelor's", value: "Bachelor's" }, 
-  { label: 'M.D', value: 'M.D' },
-  { label: 'D.P.T', value: 'D.P.T' },
-  { label: 'B.D.S', value: 'B.D.S' },
-  { label: 'J.D', value: 'J.D' },
-  { label: 'M.B.B.S', value: 'M.B.B.S' },
-  { label: 'LL.B', value: 'LL.B' },
-  { label: 'M.P.A', value: 'M.P.A' },
-
-
+  { label: "Master's", value: "Master's" },
+  { label: 'Doctorate', value: 'Doctorate' }, 
 ];
 
 export const FIELD_OF_STUDY_DATA = [
@@ -78,7 +69,8 @@ export const FIELD_OF_STUDY_DATA = [
   { label: 'Dentistry', value: 'Dentistry' }, 
   { label: 'Finance', value: 'Finance' }, 
   { label: 'Psychology', value: 'Psychology' },
-  { label: 'Education', value: 'Education' }
+  { label: 'Education', value: 'Education' },
+  { label: 'Physical Therapy', value: 'Physical Therapy' },
 ];
 
 export const PROFESSION_DATA = [
@@ -148,8 +140,8 @@ export const RASI_DATA = [
 ].map(r => ({ label: r, value: r }));
 
 export const NAKSHATRA_DATA = [
-  'Ashwini', 'Bharani', 'Krittika', 'Rohini', 'Mrigashirsha', 'Ardra', 'Punarvasu', 'Pushya', 'Ashlesha', 'Magha', 'Purva Phalguni', 'Uttara Phalguni', 'Hasta', 'Chitra', 
-  'Swati', 'Vishakha', 'Anuradha', 'Jyeshtha', 'Mula', 'Purva Ashadha', 'Uttara Ashadha', 'Shravana', 'Dhanishta', 'Shatabhisha', 'Purva Bhadrapada', 'Uttara Bhadrapada', 'Revati'
+  'Ashwini', 'Bharani', 'Krithika', 'Rohini', 'Mrigashirsha', 'Thiruvadirai', 'Punarpoosam', 'Poosam', 'Aayilyam', 'Magham', 'Pooram', 'Uttaram', 'Astham', 'Chithirai', 
+  'Swathi', 'Visakham', 'Anusham', 'Kaetai', 'Moolam', 'Pooradam', 'Uttaradam', 'Thiruvonam', 'Avittam', 'Sathayam', 'Pooratadhi', 'Uttaratathi', 'Revathi'
 ].map(s => ({ label: s, value: s }));
 
 export const NATIVE_PLACES_DATA = [
@@ -168,7 +160,7 @@ export const NATIVE_PLACES_DATA = [
   'K. Alagapuri',
   'K. Alagapuri',
   'K. Lakshmipuram',
-  'Kaanadu Kathan',
+  'Kanadukathan',
   'Kadiyapatti',
   'Kalayar Mangalam',
   'Kallal',
@@ -231,10 +223,8 @@ export const NATIVE_PLACES_DATA = [
 ].map(p => ({ label: p, value: p }));
 
 export const INTEREST_DATA = [
-  "Travel", "Fitness", "Cooking", "Photography", "Music", "Reading", "Painting", "Movies", "Dancing", "Hiking", "Gardening", "Running",
-  "Gaming", "Crafting", "Sports", "Volunteering", "Writing", "Meditation", "Cycling", "Fishing", "Collecting", "Knitting", 
-  "Soccer", "Football", "Basketball", "Camping", "Skiing", "Martial Arts", "Calligraphy", "Board Games", "Trekking", "Tennis", 
-  "Chess", "Cricket", "Swimming" 
+  "Fitness & Wellness", "Travel & Outdoors", "Food & Cooking", "Arts & Creativity", "Music & Entertainment",
+  "Reading & Learning", "Sports & Games", "Community & Service"
 ];
 
 // Only used in admin service for generating mock profiles, not in the app itself.

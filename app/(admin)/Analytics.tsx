@@ -1,4 +1,3 @@
-// ./app/(admin)/Analytics.tsx
 import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
@@ -33,8 +32,18 @@ export default function AnalyticsScreen() {
 
   const loadAnalytics = async () => {
     try {
-      const distData = await adminService.getDistributionData();
-      setData(distData);
+      const [distData, summaryData] = await Promise.all([
+        adminService.getDistributionData(),
+        adminService.getAnalytics(),
+      ]);
+
+      setData({
+        ...distData,
+        inactiveUsers: summaryData?.inactiveUsers || [],
+        inactiveThresholdDays: summaryData?.inactiveThresholdDays || 30,
+        totalUsers: summaryData?.totalUsers || 0,
+        pendingApprovals: summaryData?.pendingApprovals || 0,
+      });
     } finally {
       setLoading(false);
     }
@@ -55,7 +64,6 @@ export default function AnalyticsScreen() {
       labelColor: (opacity = 1) => rgba(theme.colors.mutedText, opacity),
       barPercentage: 0.8,
       propsForLabels: { fontSize: 9, fontWeight: '700' as any },
-      // Bars use this gradient; keep it aligned with primary.
       fillShadowGradient: theme.colors.primary,
       fillShadowGradientOpacity: 1,
     };
@@ -85,7 +93,7 @@ export default function AnalyticsScreen() {
 
   const getTopData = (obj: any, limit = 15) => {
     const sorted = Object.entries(obj || {})
-      .sort(([, a]: any, [, b]: any) => b - a)
+      .sort(([, a]: any, [, b]: any) => (b as number) - (a as number))
       .slice(0, limit);
 
     return {
@@ -97,29 +105,39 @@ export default function AnalyticsScreen() {
   const kpis = useMemo(() => {
     if (!data) return [];
 
+    const roles = data.roles || {};
+    const adminCount = Number(roles.ADMIN || 0);
+    const moderatorCount = Number(roles.MODERATOR || 0);
+    const staffCount = adminCount + moderatorCount;
+    const systemAccounts = Object.values(roles).reduce(
+      (sum: number, value: any) => sum + Number(value || 0),
+      0
+    );
+
     return [
       {
         label: 'Total Members',
-        value: Object.values(data.gender || {}).reduce(
-          (a: any, b: any) => a + b,
-          0,
-        ),
+        value: Number(data.totalUsers || 0),
+        helper: 'Submitted member profiles only',
         icon: 'people-outline' as any,
       },
       {
-        label: 'Countries',
-        value: Object.keys(data.countries || {}).length,
-        icon: 'globe-outline' as any,
+        label: 'Staff Accounts',
+        value: staffCount,
+        helper: 'Admins and moderators',
+        icon: 'shield-outline' as any,
       },
       {
-        label: 'Native Places',
-        value: Object.keys(data.nativePlaces || {}).length,
-        icon: 'home-outline' as any,
+        label: 'System Accounts',
+        value: systemAccounts,
+        helper: 'All roles combined',
+        icon: 'layers-outline' as any,
       },
       {
-        label: 'Kovils',
-        value: Object.keys(data.kovils || {}).length,
-        icon: 'business-outline' as any,
+        label: 'Pending Approvals',
+        value: Number(data.pendingApprovals || 0),
+        helper: 'Members awaiting review',
+        icon: 'time-outline' as any,
       },
     ];
   }, [data]);
@@ -133,7 +151,7 @@ export default function AnalyticsScreen() {
     );
   }
 
-  const AnalyticsCard = ({ title, icon, children }: any) => (
+  const AnalyticsCard = ({ title, subtitle, icon, children }: any) => (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <Ionicons
@@ -142,7 +160,10 @@ export default function AnalyticsScreen() {
           color={theme.colors.text}
           style={{ transformOrigin: 'center' } as any}
         />
-        <Text style={styles.cardTitle}>{title}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>{title}</Text>
+          {!!subtitle && <Text style={styles.cardSubtitle}>{subtitle}</Text>}
+        </View>
       </View>
       {children}
     </View>
@@ -158,7 +179,9 @@ export default function AnalyticsScreen() {
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>System Analytics</Text>
-            <Text style={styles.subtitle}>Directory distribution metrics</Text>
+            <Text style={styles.subtitle}>
+              Member insights and staff account breakdown
+            </Text>
           </View>
 
           <TouchableOpacity
@@ -171,6 +194,18 @@ export default function AnalyticsScreen() {
             <Ionicons name="refresh" size={16} color={theme.colors.text} />
             <Text style={styles.refreshText}>Refresh</Text>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.infoBanner}>
+          <Ionicons
+            name="information-circle-outline"
+            size={16}
+            color={theme.colors.mutedText}
+          />
+          <Text style={styles.infoBannerText}>
+            Member charts below exclude staff accounts. The roles chart includes all
+            system accounts, including admins and moderators.
+          </Text>
         </View>
 
         <ScrollView
@@ -186,15 +221,20 @@ export default function AnalyticsScreen() {
                 color={theme.colors.text}
                 style={{ transformOrigin: 'center' } as any}
               />
-              <View>
-                <Text style={styles.kpiValue}>{k.value.toLocaleString()}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.kpiValue}>{Number(k.value || 0).toLocaleString()}</Text>
                 <Text style={styles.kpiLabel}>{k.label}</Text>
+                <Text style={styles.kpiHelper}>{k.helper}</Text>
               </View>
             </View>
           ))}
         </ScrollView>
 
-        <AnalyticsCard title="Gender Distribution" icon="male-female-outline">
+        <AnalyticsCard
+          title="Gender Distribution"
+          subtitle="Approved and submitted member profiles only"
+          icon="male-female-outline"
+        >
           <ChartFrame>
             <PieChart
               data={formatPieData(data?.gender)}
@@ -208,7 +248,11 @@ export default function AnalyticsScreen() {
           </ChartFrame>
         </AnalyticsCard>
 
-        <AnalyticsCard title="Top 15 Native Places" icon="home-outline">
+        <AnalyticsCard
+          title="Top 15 Native Places"
+          subtitle="Approved and submitted member profiles only"
+          icon="home-outline"
+        >
           <ChartFrame>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <BarChart
@@ -226,7 +270,11 @@ export default function AnalyticsScreen() {
           </ChartFrame>
         </AnalyticsCard>
 
-        <AnalyticsCard title="System Roles" icon="shield-checkmark-outline">
+        <AnalyticsCard
+          title="System Roles"
+          subtitle="All staff and member accounts from user_roles"
+          icon="shield-checkmark-outline"
+        >
           <ChartFrame>
             <PieChart
               data={formatPieData(data?.roles)}
@@ -240,7 +288,44 @@ export default function AnalyticsScreen() {
           </ChartFrame>
         </AnalyticsCard>
 
-        <AnalyticsCard title="Top 15 Education Levels" icon="school-outline">
+        <AnalyticsCard
+          title={`Top 15 Inactive Users (${data?.inactiveThresholdDays ?? 30}+ days)`}
+          subtitle="Based on last successful login timestamp"
+          icon="time-outline"
+        >
+          <View style={styles.inactiveList}>
+            {data?.inactiveUsers?.length ? (
+              data.inactiveUsers.map((user: any) => (
+                <View key={user.id} style={styles.inactiveRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inactiveName}>
+                      {user.full_name || 'Unknown User'}
+                    </Text>
+                    <Text style={styles.inactiveMeta}>
+                      {(user.role || 'USER').toUpperCase()} • {user.email || 'No email'}
+                    </Text>
+                    <Text style={styles.inactiveMeta}>
+                      Last login:{' '}
+                      {user.last_login_at
+                        ? new Date(user.last_login_at).toLocaleString()
+                        : 'Never'}
+                    </Text>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.emptyText}>
+                No inactive users for this threshold.
+              </Text>
+            )}
+          </View>
+        </AnalyticsCard>
+
+        <AnalyticsCard
+          title="Top 15 Education Levels"
+          subtitle="Approved and submitted member profiles only"
+          icon="school-outline"
+        >
           <ChartFrame>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <BarChart
@@ -297,6 +382,25 @@ function makeStyles(theme: any) {
       fontWeight: '600',
     },
 
+    infoBanner: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'flex-start',
+      padding: 12,
+      borderRadius: r.card,
+      backgroundColor: theme.colors.surface2,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      marginBottom: 10,
+    },
+    infoBannerText: {
+      flex: 1,
+      color: theme.colors.mutedText,
+      fontWeight: '600',
+      fontSize: 12,
+      lineHeight: 18,
+    },
+
     refreshBtn: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -312,8 +416,9 @@ function makeStyles(theme: any) {
 
     kpiRow: { paddingVertical: 8, gap: 10, marginBottom: 6 },
     kpiChip: {
+      width: 220,
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: 10,
       backgroundColor: theme.colors.surface2,
       borderWidth: 1,
@@ -323,6 +428,13 @@ function makeStyles(theme: any) {
     },
     kpiValue: { fontSize: 16, fontWeight: '900', color: theme.colors.text },
     kpiLabel: { fontSize: 11, fontWeight: '800', color: theme.colors.mutedText },
+    kpiHelper: {
+      marginTop: 4,
+      fontSize: 11,
+      fontWeight: '600',
+      color: theme.colors.mutedText,
+      lineHeight: 16,
+    },
 
     card: {
       backgroundColor: theme.colors.surface2,
@@ -334,11 +446,17 @@ function makeStyles(theme: any) {
     },
     cardHeader: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: 12,
       marginBottom: s.sm,
     },
     cardTitle: { fontSize: 16, fontWeight: '900', color: theme.colors.text },
+    cardSubtitle: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.colors.mutedText,
+    },
 
     chartFrame: {
       borderRadius: r.card,
@@ -347,6 +465,34 @@ function makeStyles(theme: any) {
       backgroundColor: theme.colors.surface2,
       padding: 10,
       overflow: 'hidden',
+    },
+
+    inactiveList: {
+      gap: 10,
+    },
+    inactiveRow: {
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: r.card,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface2,
+    },
+    inactiveName: {
+      fontSize: 14,
+      fontWeight: '900',
+      color: theme.colors.text,
+    },
+    inactiveMeta: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.colors.mutedText,
+    },
+    emptyText: {
+      color: theme.colors.mutedText,
+      fontWeight: '700',
+      paddingVertical: 8,
     },
   });
 }

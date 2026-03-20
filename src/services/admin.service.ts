@@ -54,48 +54,232 @@ const generateValidUUID = () => {
   });
 };
 
+export type SuccessStory = {
+  id: string;
+  title: string;
+  wedding_date: string | null;
+  short_description: string | null;
+  feedback: string | null;
+  photo_url: string | null;
+  photo_path: string | null;
+  consent_confirmed: boolean;
+  is_published: boolean;
+  is_featured: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export const adminService = {
 
+
+  async listSuccessStories() {
+  const { data, error } = await supabase
+    .from('success_stories')
+    .select('*')
+    .order('is_featured', { ascending: false })
+    .order('sort_order', { ascending: true })
+    .order('wedding_date', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+},
+
+async createSuccessStory(payload: {
+  title: string;
+  wedding_date?: string | null;
+  short_description?: string | null;
+  feedback?: string | null;
+  photo_url?: string | null;
+  photo_path?: string | null;
+  consent_confirmed?: boolean;
+  is_published?: boolean;
+  is_featured?: boolean;
+  sort_order?: number;
+}) {
+  const { data: auth } = await supabase.auth.getUser();
+  const userId = auth.user?.id ?? null;
+
+  const { data, error } = await supabase
+    .from('success_stories')
+    .insert({
+      ...payload,
+      created_by: userId,
+      updated_by: userId,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+},
+
+async updateSuccessStory(
+  id: string,
+  payload: Partial<{
+    title: string;
+    wedding_date: string | null;
+    short_description: string | null;
+    feedback: string | null;
+    photo_url: string | null;
+    photo_path: string | null;
+    consent_confirmed: boolean;
+    is_published: boolean;
+    is_featured: boolean;
+    sort_order: number;
+  }>
+) {
+  const { data: auth } = await supabase.auth.getUser();
+  const userId = auth.user?.id ?? null;
+
+  const { data, error } = await supabase
+    .from('success_stories')
+    .update({
+      ...payload,
+      updated_by: userId,
+    })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+},
+
+async deleteSuccessStory(id: string) {
+  const { error } = await supabase
+    .from('success_stories')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+},
+
+async setSuccessStoryPublished(id: string, isPublished: boolean) {
+  return this.updateSuccessStory(id, { is_published: isPublished });
+},
+
+async setSuccessStoryFeatured(id: string, isFeatured: boolean) {
+  return this.updateSuccessStory(id, { is_featured: isFeatured });
+},
   // --- 1. GLOBAL SYSTEM CONFIGURATION ---
-  async getSystemConfig() {
-    try {
-      const { data, error } = await supabase
-        .from('system_settings')
-        .select('value')
-        .eq('key', 'global_config')
-        .maybeSingle();
+async getSystemConfig() {
+  try {
+    const { data, error } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'global_config')
+      .maybeSingle();
 
-      if (error) throw error;
-      
-      const cfg = (data?.value ?? {}) as any;
+    if (error) throw error;
 
-      return {
-        maintenanceMode: !!cfg.maintenanceMode,
-        allowRegistration: !!cfg.registrationEnabled,
-        requireApproval: !!cfg.requireApprovalForSearch,
-        autoPauseThreshold: String(cfg.autoFlagThreshold ?? 3),
-        favoritesLimit: String(cfg.favoritesLimit ?? 5),
-        welcomeMessage: cfg.welcomeMessage ?? '',
-        themeName: String(cfg.themeName ?? 'warm'),
-      };
-    } catch (err) {
-      console.error("Config fetch failed, using defaults:", err);
-      return { maintenanceMode: false, registrationEnabled: true, requireApproval: true };
-    }
-  },
+    const cfg = (data?.value ?? {}) as any;
 
-  async updateSystemConfig(updates: any) {
-    const { data: current } = await supabase.from('system_settings').select('value').eq('key', 'global_config').single();
-    const newValue = { ...current?.value, ...updates };
-    
-    await supabase.from('system_settings').upsert({
-      key: 'global_config',
-      value: newValue,
-      updated_at: new Date().toISOString()
-    });
+    return {
+      maintenanceMode: !!cfg.maintenanceMode,
+      allowRegistration:
+        typeof cfg.allowRegistration === 'boolean'
+          ? cfg.allowRegistration
+          : typeof cfg.registrationEnabled === 'boolean'
+            ? cfg.registrationEnabled
+            : true,
+      requireApproval:
+        typeof cfg.requireApproval === 'boolean'
+          ? cfg.requireApproval
+          : typeof cfg.requireApprovalForSearch === 'boolean'
+            ? cfg.requireApprovalForSearch
+            : true,
+      autoPauseThreshold: String(
+        cfg.autoPauseThreshold ?? cfg.autoFlagThreshold ?? 3
+      ),
+      favoritesLimit: String(cfg.favoritesLimit ?? 5),
+      inactiveUserThresholdDays: String(cfg.inactiveUserThresholdDays ?? 30),
+      welcomeMessage: String(cfg.welcomeMessage ?? ''),
+      themeName: String(cfg.themeName ?? 'warm'),
+    };
+  } catch (err) {
+    console.error('Config fetch failed, using defaults:', err);
+    return {
+      maintenanceMode: false,
+      allowRegistration: true,
+      requireApproval: true,
+      autoPauseThreshold: '3',
+      favoritesLimit: '5',
+      nactiveUserThresholdDays: '30',
+      welcomeMessage: '',
+      themeName: 'warm',
+    };
+  }
+},
 
-    await this.logAction('UPDATE_SYSTEM_CONFIG', `Updated: ${Object.keys(updates).join(', ')}`);
-  },
+async updateSystemConfig(updates: any) {
+  const { data: current, error: readError } = await supabase
+    .from('system_settings')
+    .select('value')
+    .eq('key', 'global_config')
+    .maybeSingle();
+
+  if (readError) throw readError;
+
+  const currentValue = (current?.value ?? {}) as any;
+
+  const normalized = {
+    ...currentValue,
+    maintenanceMode: !!updates.maintenanceMode,
+    allowRegistration:
+      typeof updates.allowRegistration === 'boolean'
+        ? updates.allowRegistration
+        : typeof currentValue.allowRegistration === 'boolean'
+          ? currentValue.allowRegistration
+          : typeof currentValue.registrationEnabled === 'boolean'
+            ? currentValue.registrationEnabled
+            : true,
+    requireApproval:
+      typeof updates.requireApproval === 'boolean'
+        ? updates.requireApproval
+        : typeof currentValue.requireApproval === 'boolean'
+          ? currentValue.requireApproval
+          : typeof currentValue.requireApprovalForSearch === 'boolean'
+            ? currentValue.requireApprovalForSearch
+            : true,
+    autoPauseThreshold: String(
+      updates.autoPauseThreshold ??
+        currentValue.autoPauseThreshold ??
+        currentValue.autoFlagThreshold ??
+        '3'
+    ),
+    favoritesLimit: String(
+      updates.favoritesLimit ?? currentValue.favoritesLimit ?? '5'
+    ),
+    inactiveUserThresholdDays: String(
+    updates.inactiveUserThresholdDays ??
+      currentValue.inactiveUserThresholdDays ??
+      '30'
+  ),
+    welcomeMessage: String(
+      updates.welcomeMessage ?? currentValue.welcomeMessage ?? ''
+    ),
+    themeName: String(updates.themeName ?? currentValue.themeName ?? 'warm'),
+  };
+
+  delete normalized.registrationEnabled;
+  delete normalized.requireApprovalForSearch;
+  delete normalized.autoFlagThreshold;
+
+  const { error: upsertError } = await supabase.from('system_settings').upsert({
+    key: 'global_config',
+    value: normalized,
+    updated_at: new Date().toISOString(),
+  });
+
+  if (upsertError) throw upsertError;
+
+  await this.logAction(
+    'UPDATE_SYSTEM_CONFIG',
+    `Updated: ${Object.keys(updates).join(', ')}`
+  );
+},
 
   async executeMassCleanup() {
     const confirmed = window.confirm("⚠️ DANGER: This will delete all TEST DATA and unsubmitted profiles. Proceed?");
@@ -221,88 +405,112 @@ export const adminService = {
 
   // --- 3. ANALYTICS ---
 async getDistributionData() {
-  // ✅ Only approved, submitted members should drive analytics
-  const { data: users, error } = await supabase
+  // 1) Load approved + submitted profiles for member analytics
+  const { data: profiles, error: profileError } = await supabase
     .from('profiles')
-    .select('id, resident_country, age, gender, kovil, native_place, education_history')
+    .select(
+      'id, resident_country, age, gender, kovil, native_place, education_history, is_submitted, is_approved'
+    )
     .eq('is_submitted', true)
     .eq('is_approved', true);
 
-  if (error || !users) return {};
+  if (profileError) {
+    console.error('getDistributionData profiles error:', profileError.message);
+    return {
+      countries: {},
+      ageGroups: { '18-25': 0, '26-35': 0, '36-45': 0, '46+': 0 },
+      education: {},
+      gender: {},
+      roles: { USER: 0, ADMIN: 0, MODERATOR: 0 },
+      kovils: {},
+      nativePlaces: {},
+    };
+  }
+
+  // 2) Load ALL roles for system-role analytics
+  const { data: roleRows, error: roleError } = await supabase
+    .from('user_roles')
+    .select('user_id, role');
+
+  if (roleError) {
+    console.error('getDistributionData roles error:', roleError.message);
+  }
+
+  const roleByUserId: Record<string, string> = {};
+  const roleBuckets = new Set<string>(['USER']);
+
+  (roleRows || []).forEach((row: any) => {
+    const uid = String(row?.user_id || '').trim();
+    const role = String(row?.role || 'USER').toUpperCase().trim() || 'USER';
+
+    if (uid) {
+      roleByUserId[uid] = role;
+    }
+
+    roleBuckets.add(role);
+  });
 
   const distributions: any = {
     countries: {},
     ageGroups: { '18-25': 0, '26-35': 0, '36-45': 0, '46+': 0 },
     education: {},
     gender: {},
-    roles: {}, // ✅ dynamic
+    roles: {},
     kovils: {},
     nativePlaces: {},
   };
 
-  // --- Roles: dynamic buckets + USER default ---
-  const userIds = users.map((u: any) => u.id).filter(Boolean);
+  // 3) Build role chart from ALL user_roles rows
+  roleBuckets.forEach((role) => {
+    distributions.roles[role] = 0;
+  });
 
-  const roleByUserId: Record<string, string> = {};
-  const roleBuckets = new Set<string>();
-  roleBuckets.add('USER'); // default bucket always exists
+  (roleRows || []).forEach((row: any) => {
+    const role = String(row?.role || 'USER').toUpperCase().trim() || 'USER';
+    distributions.roles[role] = (distributions.roles[role] || 0) + 1;
+  });
 
-  if (userIds.length > 0) {
-    const { data: roleRows } = await supabase
-      .from('user_roles')
-      .select('user_id, role')
-      .in('user_id', userIds);
+  // 4) Only USER profiles should contribute to member analytics
+  const memberProfiles = (profiles || []).filter((profile: any) => {
+    const role = (roleByUserId[profile.id] || 'USER').toUpperCase().trim();
+    return role === 'USER';
+  });
 
-    roleRows?.forEach((r: any) => {
-      const uid = String(r.user_id || '');
-      const role = String(r.role || 'USER').toUpperCase().trim() || 'USER';
-      if (uid) roleByUserId[uid] = role;
-      roleBuckets.add(role);
-    });
-  }
-
-  // init roles to 0 so chart shows buckets consistently
-  roleBuckets.forEach((r) => { distributions.roles[r] = 0; });
-
-  // --- Iterate users once and build everything ---
-  users.forEach((u: any) => {
-    // Countries
-    const c = u.resident_country || 'Other';
-    distributions.countries[c] = (distributions.countries[c] || 0) + 1;
+  // 5) Build member-only distributions
+  memberProfiles.forEach((profile: any) => {
+    // Country
+    const country = String(profile.resident_country || 'Other').trim() || 'Other';
+    distributions.countries[country] = (distributions.countries[country] || 0) + 1;
 
     // Native place
-    const nPlace = u.native_place || 'Other';
-    distributions.nativePlaces[nPlace] = (distributions.nativePlaces[nPlace] || 0) + 1;
+    const nativePlace = String(profile.native_place || 'Other').trim() || 'Other';
+    distributions.nativePlaces[nativePlace] =
+      (distributions.nativePlaces[nativePlace] || 0) + 1;
 
-    // Age groups
-    const age = parseInt(String(u.age || '0'), 10);
-    if (age >= 18 && age <= 25) distributions.ageGroups['18-25']++;
-    else if (age >= 26 && age <= 35) distributions.ageGroups['26-35']++;
-    else if (age >= 36 && age <= 45) distributions.ageGroups['36-45']++;
-    else if (age > 45) distributions.ageGroups['46+']++;
+    // Age group
+    const age = parseInt(String(profile.age || '0'), 10);
+    if (age >= 18 && age <= 25) distributions.ageGroups['18-25'] += 1;
+    else if (age >= 26 && age <= 35) distributions.ageGroups['26-35'] += 1;
+    else if (age >= 36 && age <= 45) distributions.ageGroups['36-45'] += 1;
+    else if (age > 45) distributions.ageGroups['46+'] += 1;
 
-    // Gender (dynamic too, handles OTHER etc)
-    const g = String(u.gender || 'UNKNOWN').toUpperCase().trim() || 'UNKNOWN';
-    distributions.gender[g] = (distributions.gender[g] || 0) + 1;
+    // Gender
+    const gender = String(profile.gender || 'UNKNOWN').toUpperCase().trim() || 'UNKNOWN';
+    distributions.gender[gender] = (distributions.gender[gender] || 0) + 1;
 
-    // Kovils
-    const k = u.kovil || 'Other';
-    distributions.kovils[k] = (distributions.kovils[k] || 0) + 1;
+    // Kovil
+    const kovil = String(profile.kovil || 'Other').trim() || 'Other';
+    distributions.kovils[kovil] = (distributions.kovils[kovil] || 0) + 1;
 
     // Education
-    // Preferred: education_history[].level
-    // Education (degree-only from education_history[].level)
-    if (Array.isArray(u.education_history)) {
-      u.education_history.forEach((eh: any) => {
-        const degree = String(eh?.level ?? '').trim();
+    if (Array.isArray(profile.education_history)) {
+      profile.education_history.forEach((entry: any) => {
+        const degree = String(entry?.level ?? '').trim();
         if (!degree) return;
-        distributions.education[degree] = (distributions.education[degree] || 0) + 1;
+        distributions.education[degree] =
+          (distributions.education[degree] || 0) + 1;
       });
     }
-
-    // ✅ Role per approved member (default USER)
-    const role = (roleByUserId[u.id] || 'USER').toUpperCase().trim() || 'USER';
-    distributions.roles[role] = (distributions.roles[role] || 0) + 1;
   });
 
   return distributions;
@@ -549,30 +757,98 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
   },
 
   async getAnalytics() {
-    const [{ count: totalMembers, error: totalErr }, { count: pending, error: pendingErr }] =
-      await Promise.all([
+    try {
+      const [
+        { data: submittedProfiles, error: submittedErr },
+        { data: pendingProfiles, error: pendingErr },
+        config,
+      ] = await Promise.all([
         supabase
           .from('profiles')
-          .select('*', { count: 'exact', head: true })
-          .eq('is_submitted', true)
-          .eq('role', 'USER'),
+          .select('id, full_name, email, last_login_at, created_at, is_submitted, is_approved')
+          .eq('is_submitted', true),
 
         supabase
           .from('profiles')
-          .select('*', { count: 'exact', head: true })
-          .eq('is_approved', false)
+          .select('id')
           .eq('is_submitted', true)
-          .eq('role', 'USER'),
+          .eq('is_approved', false),
+
+        this.getSystemConfig(),
       ]);
 
-    if (totalErr) console.warn('getAnalytics totalMembers error:', totalErr.message);
-    if (pendingErr) console.warn('getAnalytics pendingApprovals error:', pendingErr.message);
+      if (submittedErr) throw submittedErr;
+      if (pendingErr) throw pendingErr;
 
-    return {
-      totalUsers: totalMembers ?? 0,
-      pendingApprovals: pending ?? 0,
-      activeConversations: 0,
-    };
+      const profiles = submittedProfiles ?? [];
+      const pending = pendingProfiles ?? [];
+
+      const userIds = profiles.map((p) => p.id).filter(Boolean);
+
+      let roleRows: Array<{ user_id: string; role: string }> = [];
+      if (userIds.length > 0) {
+        const { data, error } = await supabase
+          .from('user_roles')
+          .select('user_id, role')
+          .in('user_id', userIds);
+
+        if (error) throw error;
+        roleRows = data ?? [];
+      }
+
+      const roleByUserId: Record<string, string> = {};
+      roleRows.forEach((r) => {
+        roleByUserId[r.user_id] = String(r.role || 'USER').toUpperCase().trim();
+      });
+
+      const thresholdDays = Math.max(
+        1,
+        parseInt(String(config?.inactiveUserThresholdDays ?? '30'), 10) || 30
+      );
+
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - thresholdDays);
+
+      const inactiveUsers = profiles
+        .map((p) => {
+          const role = roleByUserId[p.id] || 'USER';
+          return {
+            id: p.id,
+            full_name: p.full_name,
+            email: p.email,
+            role,
+            last_login_at: p.last_login_at ?? null,
+            created_at: p.created_at ?? null,
+          };
+        })
+        .filter((u) => {
+          if (!u.last_login_at) return true; // never logged in = inactive
+          return new Date(u.last_login_at) < cutoff;
+        })
+        .sort((a, b) => {
+          const aTime = a.last_login_at ? new Date(a.last_login_at).getTime() : 0;
+          const bTime = b.last_login_at ? new Date(b.last_login_at).getTime() : 0;
+          return aTime - bTime; // oldest login first
+        })
+        .slice(0, 15);
+
+      return {
+        totalUsers: profiles.length,
+        pendingApprovals: pending.length,
+        activeConversations: 0,
+        inactiveUsers,
+        inactiveThresholdDays: thresholdDays,
+      };
+    } catch (err: any) {
+      console.warn('getAnalytics error:', err?.message || err);
+      return {
+        totalUsers: 0,
+        pendingApprovals: 0,
+        activeConversations: 0,
+        inactiveUsers: [],
+        inactiveThresholdDays: 30,
+      };
+    }
   },
 
   async revokeAccess(email: string) {
@@ -617,30 +893,34 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
   },
 
   async postAnnouncement(title: string, body: string) {
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  if (userErr || !user) throw new Error('Not authenticated');
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
 
-  // optional: fetch role from profiles so author_role is accurate
-  const { data: prof } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
+    if (userErr || !user) throw new Error('Not authenticated');
 
-  const authorRole = String(prof?.role ?? 'USER').toUpperCase();
+    const { data: roleRow, error: roleErr } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .maybeSingle();
 
-  const { error: insErr } = await supabase.from('announcements').insert({
-    title,
-    body,
-    author_id: user.id,
-    author_role: authorRole,
-    // created_at omitted because table default now()
-  });
+    if (roleErr) throw roleErr;
 
-  if (insErr) throw insErr;
+    const authorRole = String(roleRow?.role ?? 'USER').toUpperCase().trim();
 
-  await this.logAction('POST_ANNOUNCEMENT', `Title: ${title}`, title);
-},
+    const { error: insErr } = await supabase.from('announcements').insert({
+      title,
+      body,
+      author_id: user.id,
+      author_role: authorRole,
+    });
+
+    if (insErr) throw insErr;
+
+    await this.logAction('POST_ANNOUNCEMENT', `Title: ${title}`, user.id);
+  },
 
   async exportToCSV() {
     try {

@@ -31,6 +31,7 @@ export default function VerifyEmailScreen() {
   const [userEmail, setUserEmail] = useState<string>(params.email ?? '');
   const [statusMessage, setStatusMessage] = useState('');
   const [statusType, setStatusType] = useState<'idle' | 'success' | 'error'>('idle');
+  
 
   useEffect(() => {
     let mounted = true;

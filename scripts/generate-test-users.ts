@@ -14,7 +14,7 @@ const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const STANDARD_TEST_PASSWORD = 'TestUser@123';
+const STANDARD_TEST_PASSWORD = 'W0rld@2026';
 
 type SeedState = {
   is_submitted: boolean;
@@ -342,6 +342,24 @@ async function generateTestUsers(count: number) {
 
         const password = STANDARD_TEST_PASSWORD;
 
+        const MALE_SEED_PHOTOS = [
+          `${supabaseUrl}/storage/v1/object/public/seed-photos/male-1.jpg`,
+          `${supabaseUrl}/storage/v1/object/public/seed-photos/male-2.jpg`,
+          `${supabaseUrl}/storage/v1/object/public/seed-photos/male-3.jpg`,
+        ];
+
+        const FEMALE_SEED_PHOTOS = [
+          `${supabaseUrl}/storage/v1/object/public/seed-photos/female-1.jpg`,
+          `${supabaseUrl}/storage/v1/object/public/seed-photos/female-2.jpg`,
+          `${supabaseUrl}/storage/v1/object/public/seed-photos/female-3.jpg`,
+        ];
+
+        function pickSeedPhotoUrl(gender: string): string {
+          const g = String(gender || '').trim().toUpperCase();
+          if (g === 'FEMALE') return pick(FEMALE_SEED_PHOTOS);
+          return pick(MALE_SEED_PHOTOS);
+        }
+
         const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
           email,
           password,
@@ -430,7 +448,7 @@ async function generateTestUsers(count: number) {
 
           hide_phone: false,
           hide_email: false,
-          profile_photo_url: '',
+          profile_photo_url: Math.random() < 0.8 ? pickSeedPhotoUrl(gender) : '',
 
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

@@ -26,6 +26,7 @@ supabase/functions/**/.env
 ops/.env.backup.local
 ops/.env.restore.local
 ops/.env.sync.local
+ops/.env.admin.local
 ops/.env.*
 
 # Native

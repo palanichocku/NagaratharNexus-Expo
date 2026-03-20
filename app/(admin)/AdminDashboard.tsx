@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
+  Image,
   Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,12 +39,13 @@ import {
   CANADA_TIMEZONE,
   toYMDInTimeZone,
 } from '@/src/utils/timezone';
-import { notify } from '@/src/utils/notify';
 import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToast } from '@/src/ui/feedback/useToast';
 
 const FS: any = FileSystem;
 const PAGE_SIZE = 20;
 type AdminTab = 'ADMIN' | 'SEARCH' | 'CALENDAR' | 'SETTINGS';
+
 const TIME_OPTIONS = [
   '06:00', '06:30',
   '07:00', '07:30',
@@ -64,7 +66,27 @@ const TIME_OPTIONS = [
   '22:00', '22:30',
 ];
 
+const EMPTY_STORY_FORM = {
+  title: '',
+  wedding_date: '',
+  short_description: '',
+  feedback: '',
+  photo_url: '',
+  photo_path: '',
+  is_published: false,
+  is_featured: false,
+  sort_order: '0',
+};
+
 export default function AdminDashboard() {
+  const [storiesLoading, setStoriesLoading] = useState(false);
+  const [storiesSaving, setStoriesSaving] = useState(false);
+  const [stories, setStories] = useState<any[]>([]);
+  const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
+  const [storyForm, setStoryForm] = useState(EMPTY_STORY_FORM);
+
+  const toast = useToast();
+  const dialog = useDialog();
   const { theme, themeName, setThemeName, availableThemes } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
@@ -102,7 +124,6 @@ export default function AdminDashboard() {
     maritalStatus: [],
   });
 
-  // ✅ keyset cursor stack (page -> cursor used to fetch that page)
   const [cursorStack, setCursorStack] = useState<(SearchCursor | null)[]>([null]);
   const [hasNextPage, setHasNextPage] = useState(false);
 
@@ -129,6 +150,7 @@ export default function AdminDashboard() {
     allowRegistration: true,
     requireApproval: true,
     autoPauseThreshold: '3',
+    inactiveUserThresholdDays: '30',
     favoritesLimit: '5',
     themeName: 'warm',
   });
@@ -143,12 +165,202 @@ export default function AdminDashboard() {
   const [slotStartTime, setSlotStartTime] = useState('09:00');
   const [slotEndTime, setSlotEndTime] = useState('17:00');
   const [timePickerMode, setTimePickerMode] = useState<'START' | 'END' | null>(null);
-  const dialog = useDialog();
 
   const calendarDayLabel = useMemo(
     () => toYMDInTimeZone(calendarDay, CANADA_TIMEZONE),
     [calendarDay]
   );
+
+  const loadStories = useCallback(async () => {
+    setStoriesLoading(true);
+    try {
+      const result = await adminService.listSuccessStories();
+      setStories(result || []);
+    } catch (e) {
+      console.error('Failed to load success stories:', e);
+      setStories([]);
+      if (isWeb) {
+        alert('Unable to load success stories');
+      } else {
+        dialog.show({
+          title: 'Error',
+          message: 'Failed to load success stories',
+          tone: 'error',
+        });
+      }
+    } finally {
+      setStoriesLoading(false);
+    }
+  }, [dialog, isWeb]);
+
+  const openCreateStory = useCallback(async () => {
+    setEditingStoryId(null);
+    setStoryForm(EMPTY_STORY_FORM);
+    await loadStories();
+    setActiveModal('SUCCESS_STORIES');
+  }, [loadStories]);
+
+  const startEditStory = useCallback((story: any) => {
+    setEditingStoryId(story.id);
+    setStoryForm({
+      title: story.title ?? '',
+      wedding_date: story.wedding_date ?? '',
+      short_description: story.short_description ?? '',
+      feedback: story.feedback ?? '',
+      photo_url: story.photo_url ?? '',
+      photo_path: story.photo_path ?? '',
+      is_published: !!story.is_published,
+      is_featured: !!story.is_featured,
+      sort_order: String(story.sort_order ?? 0),
+    });
+  }, []);
+
+  const resetStoryForm = useCallback(() => {
+    setEditingStoryId(null);
+    setStoryForm(EMPTY_STORY_FORM);
+  }, []);
+
+  const handleSaveStory = useCallback(async () => {
+    if (!storyForm.title.trim()) {
+      isWeb ? alert('Title is required') : Alert.alert('Missing data', 'Title is required');
+      return;
+    }
+
+    if (!storyForm.wedding_date.trim()) {
+      isWeb ? alert('Wedding date is required') : Alert.alert('Missing data', 'Wedding date is required');
+      return;
+    }
+
+    setStoriesSaving(true);
+    try {
+      const payload = {
+        title: storyForm.title.trim(),
+        wedding_date: storyForm.wedding_date.trim() || null,
+        short_description: storyForm.short_description.trim() || null,
+        feedback: storyForm.feedback.trim() || null,
+        photo_url: storyForm.photo_url.trim() || null,
+        photo_path: storyForm.photo_path.trim() || null,
+        is_published: storyForm.is_published,
+        is_featured: storyForm.is_featured,
+        sort_order: Number(storyForm.sort_order || '0'),
+      };
+
+      await loadStories();
+      resetStoryForm();
+      isWeb ? alert('Success story saved') : Alert.alert('Saved', 'Success story saved');
+
+      let savedStory: any;
+
+      if (editingStoryId) {
+        savedStory = await adminService.updateSuccessStory(editingStoryId, payload);
+      } else {
+        savedStory = await adminService.createSuccessStory(payload);
+      }
+
+      await loadStories();
+
+    if (savedStory?.id) {
+      startEditStory(savedStory);
+    }
+
+    isWeb ? alert('Success story saved') : Alert.alert('Saved', 'Success story saved');
+
+    } catch (e: any) {
+      console.error('Save story failed:', e);
+      const msg = e?.message ?? 'Unable to save success story';
+      isWeb ? alert(msg) : Alert.alert('Error', msg);
+    } finally {
+      setStoriesSaving(false);
+    }
+  }, [storyForm, editingStoryId, loadStories, resetStoryForm, isWeb]);
+
+
+  const handleUploadStoryPhoto = useCallback(async () => {
+  if (!editingStoryId) {
+    if (isWeb) alert('Please create the story first, then upload a photo.');
+    else Alert.alert('Create story first', 'Please create the story first, then upload a photo.');
+    return;
+  }
+
+  try {
+    let file: File | null = null;
+
+    if (Platform.OS === 'web') {
+      file = await new Promise<File | null>((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = () => {
+          const selected = input.files?.[0] ?? null;
+          resolve(selected);
+        };
+        input.click();
+      });
+    } else {
+      Alert.alert('Not supported yet', 'Photo upload is currently wired for web first.');
+      return;
+    }
+
+    if (!file) return;
+
+    const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+    const fileName = `photo.${fileExt}`;
+    const filePath = `${editingStoryId}/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('success-stories')
+      .upload(filePath, file, {
+        upsert: true,
+        contentType: file.type || 'image/jpeg',
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: publicUrlData } = supabase.storage
+      .from('success-stories')
+      .getPublicUrl(filePath);
+
+    const photoUrl = publicUrlData?.publicUrl ?? null;
+
+    await adminService.updateSuccessStory(editingStoryId, {
+      photo_url: photoUrl,
+      photo_path: filePath,
+    });
+
+    setStoryForm((prev) => ({
+      ...prev,
+      photo_url: photoUrl ?? '',
+      photo_path: filePath,
+    }));
+
+    await loadStories();
+
+    
+    if (isWeb) alert('Photo uploaded successfully.');
+    else Alert.alert('Uploaded', 'Photo uploaded successfully.');
+  } catch (e: any) {
+    console.error('Story photo upload failed FULL:', JSON.stringify(e, null, 2));
+    console.error('Story photo upload failed RAW:', e);
+    const msg = e?.message ?? 'Unable to upload photo';
+    if (isWeb) alert(msg);
+    else Alert.alert('Error', msg);
+  }
+}, [editingStoryId, isWeb, loadStories]);
+
+  const handleDeleteStory = useCallback(async (id: string) => {
+    const ok = isWeb ? window.confirm('Delete this success story?') : true;
+    if (!ok) return;
+
+    try {
+      await adminService.deleteSuccessStory(id);
+      await loadStories();
+      if (editingStoryId === id) resetStoryForm();
+      isWeb ? alert('Deleted') : Alert.alert('Deleted', 'Success story removed');
+    } catch (e: any) {
+      const msg = e?.message ?? 'Unable to delete success story';
+      isWeb ? alert(msg) : Alert.alert('Error', msg);
+    }
+  }, [editingStoryId, isWeb, loadStories, resetStoryForm]);
 
   const endTimeOptions = useMemo(
     () => TIME_OPTIONS.filter((t) => t > slotStartTime),
@@ -160,7 +372,6 @@ export default function AdminDashboard() {
     [userRole]
   );
 
-  /** Reset keyset pagination state (used on filter change / reset) */
   const resetSearchPaging = useCallback(() => {
     setCursorStack([null]);
     setHasNextPage(false);
@@ -168,10 +379,6 @@ export default function AdminDashboard() {
     setSearchIndex(0);
   }, []);
 
-  /**
-   * 🚀 SCHEMA-PROOF IDENTITY FETCH
-   * We perform manual lookups to bypass schema join errors (400).
-   */
   const fetchAdminProfile = useCallback(async (userId: string) => {
     try {
       const [profRes, roleRes] = await Promise.all([
@@ -214,7 +421,7 @@ export default function AdminDashboard() {
     }
   }, []);
 
-    const loadCalendar = useCallback(async () => {
+  const loadCalendar = useCallback(async () => {
     setCalendarLoading(true);
     try {
       const {
@@ -241,12 +448,16 @@ export default function AdminDashboard() {
     } catch (e: any) {
       console.error('Calendar load failed:', e);
       if (activeTab === 'CALENDAR') {
-        Alert.alert('Error', e.message ?? 'Failed to load calendar');
+        dialog.show({
+          title: 'Error',
+          message: e?.message ?? 'Failed to load calendar',
+          tone: 'error',
+        });
       }
     } finally {
       setCalendarLoading(false);
     }
-  }, [calendarDay, activeTab]);
+  }, [calendarDay, activeTab, dialog]);
 
   useEffect(() => {
     if (activeTab !== 'CALENDAR') return;
@@ -268,10 +479,8 @@ export default function AdminDashboard() {
       if (activeTab === 'CALENDAR') {
         loadCalendar();
       }
-
     });
 
-    
     return unsubscribe;
   }, [activeTab, loadCalendar]);
 
@@ -306,36 +515,48 @@ export default function AdminDashboard() {
 
       await loadCalendar();
     } catch (e: any) {
-      Alert.alert('Unable to create slots', e.message ?? 'Please try again');
+      dialog.show({
+        title: 'Error',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
     } finally {
       setCalendarSaving(false);
     }
   }, [calendarDayLabel, loadCalendar, slotStartTime, slotEndTime, dialog]);
 
-
   const handleDeleteCalendarSlot = useCallback(
-    async (slotId: string) => {
-      try {
-        const ok = isWeb
-          ? window.confirm('Delete this open slot?')
-          : true;
-
-        if (!ok) return;
-
-        setCalendarSaving(true);
-        await moderatorCalendarService.deleteSlot(slotId);
-        await loadCalendar();
-
-        if (!isWeb) {
-          Alert.alert('Deleted', 'The slot has been removed.');
-        }
-      } catch (e: any) {
-        Alert.alert('Unable to delete slot', e.message ?? 'Please try again');
-      } finally {
-        setCalendarSaving(false);
-      }
+    (slotId: string) => {
+      dialog.show({
+        title: 'Delete this open slot?',
+        message: 'This slot will be removed from the calendar.',
+        tone: 'warning',
+        actions: [
+          { label: 'Cancel', variant: 'secondary' },
+          {
+            label: 'Delete',
+            variant: 'danger',
+            onPress: async () => {
+              try {
+                setCalendarSaving(true);
+                await moderatorCalendarService.deleteSlot(slotId);
+                await loadCalendar();
+                toast.show('The slot has been removed.', 'success');
+              } catch (e: any) {
+                dialog.show({
+                  title: 'Unable to delete slot',
+                  message: e?.message ?? 'Please try again.',
+                  tone: 'error',
+                });
+              } finally {
+                setCalendarSaving(false);
+              }
+            },
+          },
+        ],
+      });
     },
-    [isWeb, loadCalendar]
+    [dialog, loadCalendar, toast]
   );
 
   const handleBookCalendarSlot = useCallback(
@@ -346,20 +567,24 @@ export default function AdminDashboard() {
         if (rescheduleFromSlotId) {
           await moderatorCalendarService.reschedule(rescheduleFromSlotId, slotId);
           setRescheduleFromSlotId(null);
-          Alert.alert('Rescheduled', 'The booking has been moved.');
+          toast.show('The booking has been moved.', 'success');
         } else {
           await moderatorCalendarService.bookSlot(slotId);
-          Alert.alert('Booked', 'The slot has been reserved.');
+          toast.show('Booked. The slot has been reserved.', 'success');
         }
 
         await loadCalendar();
       } catch (e: any) {
-        Alert.alert('Unable to save', e.message ?? 'Please try again');
+        dialog.show({
+          title: 'Unable to save',
+          message: e.message ?? 'Please try again',
+          tone: 'error',
+        });
       } finally {
         setCalendarSaving(false);
       }
     },
-    [loadCalendar, rescheduleFromSlotId]
+    [loadCalendar, rescheduleFromSlotId, dialog, toast]
   );
 
   const handleCancelCalendarSlot = useCallback(
@@ -369,14 +594,18 @@ export default function AdminDashboard() {
         await moderatorCalendarService.cancelBooking(slotId, 'Cancelled from admin dashboard');
         setRescheduleFromSlotId(null);
         await loadCalendar();
-        Alert.alert('Cancelled', 'The booking has been cancelled.');
+        toast.show('Cancelled. The booking has been moved.', 'success');
       } catch (e: any) {
-        Alert.alert('Unable to cancel', e.message ?? 'Please try again');
+        dialog.show({
+          title: 'Unable to cancel',
+          message: e?.message ?? 'Please try again',
+          tone: 'error',
+        });
       } finally {
         setCalendarSaving(false);
       }
     },
-    [loadCalendar]
+    [loadCalendar, dialog, toast]
   );
 
   const shiftCalendarDay = useCallback((delta: number) => {
@@ -385,170 +614,184 @@ export default function AdminDashboard() {
     setCalendarDay(next);
   }, [calendarDay]);
 
-    const renderModeratorCalendar = () => (
-      <View style={styles.calendarPage}>
-        <View style={styles.calendarHeader}>
-          <View>
-            <Text style={styles.settingsTitle}>Moderator Calendar</Text>
-            <Text style={styles.calendarSubtitle}>
-              Toronto, IST, and GMT shown together
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.calendarDayBar}>
-          <TouchableOpacity
-            onPress={() => shiftCalendarDay(-1)}
-            style={styles.calendarDayArrow}
-          >
-            <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
-          </TouchableOpacity>
-
-          <Text style={styles.calendarDayText}>{calendarDayLabel}</Text>
-
-          <TouchableOpacity
-            onPress={() => shiftCalendarDay(1)}
-            style={styles.calendarDayArrow}
-          >
-            <Ionicons name="chevron-forward" size={18} color={theme.colors.text} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.slotComposerCard}>
-          <Text style={styles.slotComposerTitle}>Create Availability</Text>
-          <Text style={styles.slotComposerSub}>
-            Add half-hour slots for the selected day in Toronto time.
+  const renderModeratorCalendar = () => (
+    <View style={styles.calendarPage}>
+      <View style={styles.calendarHeader}>
+        <View>
+          <Text style={styles.settingsTitle}>Moderator Calendar</Text>
+          <Text style={styles.calendarSubtitle}>
+            Toronto, IST, and GMT shown together
           </Text>
+        </View>
+      </View>
 
-          <View style={styles.slotComposerRow}>
-            <View style={styles.slotTimeField}>
-              <Text style={styles.slotTimeLabel}>Start</Text>
-              <TouchableOpacity
-                style={styles.slotTimeInput}
-                onPress={() => setTimePickerMode('START')}
-              >
-                <Text style={styles.slotTimeInputText}>{slotStartTime}</Text>
-                <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
-              </TouchableOpacity>
-            </View>
+      <View style={styles.calendarDayBar}>
+        <TouchableOpacity
+          onPress={() => shiftCalendarDay(-1)}
+          style={styles.calendarDayArrow}
+        >
+          <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
+        </TouchableOpacity>
 
-            <View style={styles.slotTimeField}>
-              <Text style={styles.slotTimeLabel}>End</Text>
-              <TouchableOpacity
-                style={styles.slotTimeInput}
-                onPress={() => setTimePickerMode('END')}
-              >
-                <Text style={styles.slotTimeInputText}>{slotEndTime}</Text>
-                <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
-              </TouchableOpacity>
-            </View>
+        <Text style={styles.calendarDayText}>{calendarDayLabel}</Text>
 
+        <TouchableOpacity
+          onPress={() => shiftCalendarDay(1)}
+          style={styles.calendarDayArrow}
+        >
+          <Ionicons name="chevron-forward" size={18} color={theme.colors.text} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.slotComposerCard}>
+        <Text style={styles.slotComposerTitle}>Create Availability</Text>
+        <Text style={styles.slotComposerSub}>
+          Add half-hour slots for the selected day in Toronto time.
+        </Text>
+
+        <View style={styles.slotComposerRow}>
+          <View style={styles.slotTimeField}>
+            <Text style={styles.slotTimeLabel}>Start</Text>
             <TouchableOpacity
-              style={styles.calendarCreateBtn}
-              onPress={createSlotsForSelectedWindow}
-              disabled={calendarSaving}
+              style={styles.slotTimeInput}
+              onPress={() => setTimePickerMode('START')}
             >
-              <Ionicons
-                name="add-circle-outline"
-                size={18}
-                color={theme.colors.text}
-              />
-              <Text style={styles.calendarCreateBtnText}>Add Slots</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.calendarDangerBtn}
-              onPress={async () => {
-                try {
-                  const ok = isWeb
-                    ? window.confirm(`Clear all open slots for ${calendarDayLabel}?`)
-                    : true;
-
-                  if (!ok) return;
-
-                  setCalendarSaving(true);
-                  const count = await moderatorCalendarService.clearOpenSlotsForDay(
-                    calendarDayLabel,
-                    CANADA_TIMEZONE
-                  );
-                  await loadCalendar();
-
-                  if (isWeb) {
-                    alert(`Cleared ${count} open slot${count === 1 ? '' : 's'}.`);
-                  } else {
-                    Alert.alert('Cleared', `Removed ${count} open slot${count === 1 ? '' : 's'}.`);
-                  }
-                } catch (e: any) {
-                  Alert.alert('Unable to clear slots', e.message ?? 'Please try again');
-                } finally {
-                  setCalendarSaving(false);
-                }
-              }}
-              disabled={calendarSaving}
-            >
-              <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
-              <Text style={styles.calendarDangerBtnText}>Clear Open Slots</Text>
-            </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    {rescheduleFromSlotId ? (
-                      <View style={styles.calendarBanner}>
-                        <Text style={styles.calendarBannerText}>
-                          Choose a new open slot to finish rescheduling.
-                        </Text>
-                        <TouchableOpacity onPress={() => setRescheduleFromSlotId(null)}>
-                          <Text style={styles.calendarBannerLink}>Clear</Text>
+              <Text style={styles.slotTimeInputText}>{slotStartTime}</Text>
+              <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
             </TouchableOpacity>
           </View>
-        ) : null}
 
-        {calendarLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={styles.loadingText}>Loading calendar...</Text>
+          <View style={styles.slotTimeField}>
+            <Text style={styles.slotTimeLabel}>End</Text>
+            <TouchableOpacity
+              style={styles.slotTimeInput}
+              onPress={() => setTimePickerMode('END')}
+            >
+              <Text style={styles.slotTimeInputText}>{slotEndTime}</Text>
+              <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
+            </TouchableOpacity>
           </View>
-        ) : (
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={styles.calendarListContent}
-            showsVerticalScrollIndicator={false}
+
+          <TouchableOpacity
+            style={styles.calendarCreateBtn}
+            onPress={createSlotsForSelectedWindow}
+            disabled={calendarSaving}
           >
-            {calendarSlots.length === 0 ? (
-              <View style={styles.calendarEmptyCard}>
-                <Text style={styles.calendarEmptyTitle}>No slots yet</Text>
-                <Text style={styles.calendarEmptySub}>
-                  Create availability for this day to start taking bookings.
-                </Text>
-              </View>
-            ) : (
-              calendarSlots.map((slot) => {
-                const isMine =
-                  !!calendarUserId && slot.booked_by_user_id === calendarUserId;
+            <Ionicons
+              name="add-circle-outline"
+              size={18}
+              color={theme.colors.text}
+            />
+            <Text style={styles.calendarCreateBtnText}>Add Slots</Text>
+          </TouchableOpacity>
 
-                return (
-                  <SlotCard
-                    key={slot.id}
-                    slot={slot}
-                    isModerator={true}
-                    isMine={isMine}
-                    onBook={() => handleBookCalendarSlot(slot.id)}
-                    onCancel={() => handleCancelCalendarSlot(slot.id)}
-                    onReschedule={() => setRescheduleFromSlotId(slot.id)}
-                    onDelete={() => handleDeleteCalendarSlot(slot.id)}
-                  />
-                );
-              })
-            )}
-          </ScrollView>
-        )}
+          <TouchableOpacity
+            style={styles.calendarDangerBtn}
+            onPress={() => {
+              dialog.show({
+                title: 'Clear open slots?',
+                message: `This will remove all unbooked slots for ${calendarDayLabel}. Booked slots will remain.`,
+                tone: 'warning',
+                actions: [
+                  { label: 'Cancel', variant: 'secondary' },
+                  {
+                    label: 'Clear Slots',
+                    variant: 'danger',
+                    onPress: async () => {
+                      try {
+                        setCalendarSaving(true);
 
-        {calendarSaving ? (
-          <View style={styles.calendarSavingOverlay}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-          </View>
-        ) : null}
+                        const count = await moderatorCalendarService.clearOpenSlotsForDay(
+                          calendarDayLabel,
+                          CANADA_TIMEZONE
+                        );
+
+                        await loadCalendar();
+
+                        toast.show(
+                          `Removed ${count} open slot${count === 1 ? '' : 's'}.`,
+                          'success'
+                        );
+                      } catch (e: any) {
+                        dialog.show({
+                          title: 'Unable to clear slots',
+                          message: e?.message ?? 'Please try again.',
+                          tone: 'error',
+                        });
+                      } finally {
+                        setCalendarSaving(false);
+                      }
+                    },
+                  },
+                ],
+              });
+            }}
+            disabled={calendarSaving}
+          >
+            <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
+            <Text style={styles.calendarDangerBtnText}>Clear Open Slots</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {rescheduleFromSlotId ? (
+        <View style={styles.calendarBanner}>
+          <Text style={styles.calendarBannerText}>
+            Choose a new open slot to finish rescheduling.
+          </Text>
+          <TouchableOpacity onPress={() => setRescheduleFromSlotId(null)}>
+            <Text style={styles.calendarBannerLink}>Clear</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {calendarLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={styles.loadingText}>Loading calendar...</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.calendarListContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {calendarSlots.length === 0 ? (
+            <View style={styles.calendarEmptyCard}>
+              <Text style={styles.calendarEmptyTitle}>No slots yet</Text>
+              <Text style={styles.calendarEmptySub}>
+                Create availability for this day to start taking bookings.
+              </Text>
+            </View>
+          ) : (
+            calendarSlots.map((slot) => {
+              const isMine =
+                !!calendarUserId && slot.booked_by_user_id === calendarUserId;
+
+              return (
+                <SlotCard
+                  key={slot.id}
+                  slot={slot}
+                  isModerator={true}
+                  isMine={isMine}
+                  onBook={() => handleBookCalendarSlot(slot.id)}
+                  onCancel={() => handleCancelCalendarSlot(slot.id)}
+                  onReschedule={() => setRescheduleFromSlotId(slot.id)}
+                  onDelete={() => handleDeleteCalendarSlot(slot.id)}
+                />
+              );
+            })
+          )}
+        </ScrollView>
+      )}
+
+      {calendarSaving ? (
+        <View style={styles.calendarSavingOverlay}>
+          <ActivityIndicator size="small" color={theme.colors.primary} />
+        </View>
+      ) : null}
     </View>
-);
+  );
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -574,33 +817,13 @@ export default function AdminDashboard() {
     };
   }, [fetchAdminProfile, loadData]);
 
-
-  /* DEBUG
-  useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      console.log("UID:", user?.id);
-
-      const { data: isAdmin } = await supabase.rpc('is_admin');
-      console.log("is_admin:", isAdmin);
-
-      const { data: isStaff } = await supabase.rpc('is_staff');
-      console.log("is_staff:", isStaff);
-
-      const { data: isMod } = await supabase.rpc('is_moderator');
-      console.log("is_moderator:", isMod);
-    })();
-  }, []);
-  */
-
   const { signOut, isSigningOut } = useSignOut({
     redirectTo: '/login',
     onBeforeSignOut: async () => {
-      // ✅ close overlays so clicks never get eaten / stuck
       setActiveModal(null);
     },
   });
-    
+
   const handleExport = useCallback(async () => {
     setLoading(true);
     try {
@@ -627,10 +850,10 @@ export default function AdminDashboard() {
     try {
       await adminService.deleteTestUsers((p) => setProcessProgress(p));
       await loadData(true);
-      if (isWeb) alert('Success: Test data removed.');
-      else Alert.alert('Cleaned', 'Test data removed.');
+      toast.show('Success: Test data removed', 'success');
       setActiveModal(null);
     } catch (e: any) {
+      toast.show('Success: Test data removed', 'success');
       if (isWeb) alert('Error: ' + e.message);
       else Alert.alert('Error', e.message);
     } finally {
@@ -639,7 +862,6 @@ export default function AdminDashboard() {
     }
   }, [isWeb, loadData]);
 
-  // --- THEME PICKER (global) ---
   const ThemePicker = () => (
     <View style={styles.themePickerCard}>
       <Text style={styles.themePickerTitle}>Theme</Text>
@@ -652,9 +874,8 @@ export default function AdminDashboard() {
               key={t}
               onPress={() => {
                 setThemeName(t);
-                setSettings((prev) => ({ ...prev, themeName: t })); // ✅ persist to DB on Save
+                setSettings((prev) => ({ ...prev, themeName: t }));
               }}
-              
               style={[styles.themeChip, active ? styles.themeChipActive : styles.themeChipIdle]}
             >
               <Text style={[styles.themeChipText, active ? styles.themeChipTextActive : styles.themeChipTextIdle]}>
@@ -667,7 +888,6 @@ export default function AdminDashboard() {
     </View>
   );
 
-  // UI RENDERERS
   const renderAdminSearch = () => {
     return (
       <SearchExperience
@@ -678,7 +898,7 @@ export default function AdminDashboard() {
         onReport={() => Alert.alert('Admin', 'Use utilities to revoke.')}
       />
     );
- };
+  };
 
   const renderSettings = () => (
     <View style={styles.settingsPage}>
@@ -695,7 +915,7 @@ export default function AdminDashboard() {
         />
         <SettingsRow
           styles={styles}
-          label="Allow New Registrations"
+          label="Allow New Member Signups"
           value={settings.allowRegistration}
           onValueChange={(v: boolean) => setSettings({ ...settings, allowRegistration: v })}
         />
@@ -707,6 +927,16 @@ export default function AdminDashboard() {
         />
         <SettingsNumberRow
           styles={styles}
+          label="Inactive User Threshold (Days)"
+          value={settings.inactiveUserThresholdDays}
+          hint="Users not signed in within this many days will appear in Top Inactive Users."
+          onChangeText={(t: string) => {
+            const n = clampInt(t, 30, 1, 3650);
+            setSettings({ ...settings, inactiveUserThresholdDays: String(n) });
+          }}
+        />
+        <SettingsNumberRow
+          styles={styles}
           label="Favorites Limit"
           value={settings.favoritesLimit}
           hint="Max favorites a user can save (1–20)."
@@ -714,14 +944,14 @@ export default function AdminDashboard() {
             const n = clampInt(t, 5, 1, 20);
             setSettings({ ...settings, favoritesLimit: String(n) });
           }}
-      />
+        />
       </View>
 
       <TouchableOpacity
         style={styles.saveSettingsBtn}
         onPress={async () => {
           await adminService.updateSystemConfig(settings);
-          isWeb ? alert('Saved') : Alert.alert('Success', 'Settings Saved');
+          toast.show('Configuration saved successfully.', 'success');
         }}
       >
         <Text style={styles.saveSettingsText}>Save Configuration</Text>
@@ -741,15 +971,15 @@ export default function AdminDashboard() {
         </TouchableOpacity>
         <SignOutButton
           variant="header"
-          onBeforeSignOut={() => setActiveModal(null)} // ✅ close overlays first (important!)
+          onBeforeSignOut={() => setActiveModal(null)}
         />
       </View>
 
       <View style={styles.scrollContent}>
         <View style={styles.statsRow}>
-          <StatCard styles={styles} theme={theme} label="Total Members" value={stats.totalUsers} icon="people" color={theme.colors.primary} />
-          <StatCard styles={styles} theme={theme} label="Awaiting Review" value={stats.pendingApprovals} icon="time" color={theme.colors.primary} />
-          <StatCard styles={styles} theme={theme} label="Active Reports" value={reports.length} icon="alert-circle" color={theme.colors.danger} />
+          <StatCard styles={styles} label="Total Members" value={stats.totalUsers} icon="people" color={theme.colors.primary} />
+          <StatCard styles={styles} label="Awaiting Review" value={stats.pendingApprovals} icon="time" color={theme.colors.primary} />
+          <StatCard styles={styles} label="Active Reports" value={reports.length} icon="alert-circle" color={theme.colors.danger} />
         </View>
 
         <View style={styles.mainGrid}>
@@ -803,12 +1033,11 @@ export default function AdminDashboard() {
             <UtilityBtn styles={styles} label="User Explorer" icon="list-circle" color={theme.colors.primary} onPress={() => setActiveModal('USER_REPORT')} />
             <UtilityBtn styles={styles} label="System Analytics" icon="bar-chart" color={theme.colors.success ?? theme.colors.primary} onPress={() => setActiveModal('CHARTS')} />
             <UtilityBtn styles={styles} label="Send Broadcast" icon="megaphone" color={theme.colors.primary} onPress={() => setActiveModal('ANNOUNCEMENT')} />
-            {/* DEBUG <UtilityBtn styles={styles} label="Test Audit Log" icon="bug-outline" color={theme.colors.primary} onPress={runAuditTest}/> */}
+            <UtilityBtn styles={styles} label="Success Stories" icon="heart" color="#E11D48" onPress={openCreateStory} />
 
             {isSysAdmin && (
               <>
                 <SectionHeader styles={styles} title="Administration" style={{ marginTop: 20, color: theme.colors.danger }} />
-                {/* <UtilityBtn styles={styles} label="Add Staff Member" icon="person-add" color={theme.colors.primary} onPress={() => setActiveModal('ADD_MOD')} /> */}
                 <UtilityBtn styles={styles} label="Manage Privileges" icon="person-remove" color={theme.colors.danger} onPress={() => setActiveModal('REVOKE_ACCESS')} />
                 <UtilityBtn
                   styles={styles}
@@ -821,13 +1050,7 @@ export default function AdminDashboard() {
                     setActiveModal('LOGS');
                   }}
                 />
-                {/* <UtilityBtn styles={styles} label="Data Engine" icon="flask" color={theme.colors.primary} onPress={() => setActiveModal('TEST_GEN')} /> */}
                 <UtilityBtn styles={styles} label="Download CSV" icon="download" color={theme.colors.text} onPress={handleExport} />
-                {/* <TouchableOpacity style={styles.dangerBtn} onPress={() => adminService.executeMassCleanup()}>
-                  <Ionicons name="trash" size={20} color={theme.colors.danger} style={{ transformOrigin: 'center' } as any} />
-                  <Text style={{ color: theme.colors.danger, fontWeight: '800' }}>Mass Data Cleanup</Text>
-                </TouchableOpacity>
-                */}
               </>
             )}
           </View>
@@ -897,10 +1120,9 @@ export default function AdminDashboard() {
               : renderWorkspace()}
       </View>
 
-      {/* MODALS (✅ preserved + themed) */}
       <Modal visible={activeModal === 'REVIEW'} animationType="slide">
         <View style={styles.modalContentFull}>
-          <ModalHeader styles={styles} theme={theme} title="Profile Verification" onClose={() => setActiveModal(null)} />
+          <ModalHeader styles={styles} title="Profile Verification" onClose={() => setActiveModal(null)} />
           <ScrollView>{selectedUser && <ProfileDisplay profile={selectedUser} />}</ScrollView>
           <View style={styles.modalFooter}>
             <TouchableOpacity
@@ -929,7 +1151,7 @@ export default function AdminDashboard() {
 
       <Modal visible={activeModal === 'USER_REPORT'} animationType="slide">
         <View style={styles.modalContentFull}>
-          <ModalHeader styles={styles} theme={theme} title="User Management" onClose={() => setActiveModal(null)} />
+          <ModalHeader styles={styles} title="User Management" onClose={() => setActiveModal(null)} />
           <UserManagementScreen />
         </View>
       </Modal>
@@ -950,7 +1172,7 @@ export default function AdminDashboard() {
               onPress={async () => {
                 await adminService.postAnnouncement(announcement.title, announcement.body);
                 setActiveModal(null);
-                isWeb ? alert('Broadcast Sent') : Alert.alert('Success', 'Sent');
+                toast.show('Broadcast sent', 'success');
               }}
             >
               <Text style={styles.applyText}>Dispatch Now</Text>
@@ -958,6 +1180,187 @@ export default function AdminDashboard() {
             <TouchableOpacity onPress={() => setActiveModal(null)}>
               <Text style={styles.cancelText}>Dismiss</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={activeModal === 'SUCCESS_STORIES'} animationType="slide">
+        <View style={styles.modalContentFull}>
+          <ModalHeader
+            styles={styles}
+            title="Success Stories Manager"
+            onClose={() => {
+              setActiveModal(null);
+              resetStoryForm();
+            }}
+          />
+
+          <View style={{ flex: 1, flexDirection: Platform.OS === 'web' ? 'row' : 'column' }}>
+            <View
+              style={{
+                width: Platform.OS === 'web' ? 360 : '100%',
+                borderRightWidth: Platform.OS === 'web' ? 1 : 0,
+                borderColor: '#EEE',
+                backgroundColor: '#FAFAFA',
+              }}
+            >
+              <View style={{ padding: 16, borderBottomWidth: 1, borderColor: '#EEE' }}>
+                <TouchableOpacity
+                  style={[styles.applyBtn, { marginTop: 0 }]}
+                  onPress={resetStoryForm}
+                >
+                  <Text style={styles.applyText}>New Story</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView>
+                {storiesLoading ? (
+                  <ActivityIndicator style={{ marginTop: 20 }} size="small" color="#007AFF" />
+                ) : stories.length === 0 ? (
+                  <Text style={styles.emptyText}>No success stories yet.</Text>
+                ) : (
+                  stories.map((story) => (
+                    <TouchableOpacity
+                      key={story.id}
+                      onPress={() => startEditStory(story)}
+                      style={[
+                        styles.itemRow,
+                        editingStoryId === story.id && { 
+                          backgroundColor: '#EEF6FF',
+                          borderLeftWidth: 4,
+                          borderLeftColor: '#7B1E3A', 
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontWeight: '800', color: '#111827' }}>{story.title}</Text>
+                        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>
+                          {story.wedding_date || 'No wedding date'}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: story.is_published ? '#16A34A' : '#F59E0B', marginTop: 4 }}>
+                          {story.is_published ? 'Published' : 'Draft'}
+                          {story.is_featured ? ' • Featured' : ''}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                    </TouchableOpacity>
+                  ))
+                )}
+              </ScrollView>
+            </View>
+
+            <ScrollView style={{ flex: 1, backgroundColor: '#FFF' }} contentContainerStyle={{ padding: 20 }}>
+              <Text style={styles.sectionTitle}>
+                {editingStoryId ? 'Edit Story' : 'Create Story'}
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Title"
+                value={storyForm.title}
+                onChangeText={(t) => setStoryForm({ ...storyForm, title: t })}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Wedding date (YYYY-MM-DD)"
+                value={storyForm.wedding_date}
+                onChangeText={(t) => setStoryForm({ ...storyForm, wedding_date: t })}
+              />
+
+              <TextInput
+                style={[styles.input, { height: 90 }]}
+                placeholder="Short description"
+                multiline
+                value={storyForm.short_description}
+                onChangeText={(t) => setStoryForm({ ...storyForm, short_description: t })}
+              />
+
+              <TextInput
+                style={[styles.input, { height: 100 }]}
+                placeholder="Feedback"
+                multiline
+                value={storyForm.feedback}
+                onChangeText={(t) => setStoryForm({ ...storyForm, feedback: t })}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Sort order"
+                keyboardType="numeric"
+                value={storyForm.sort_order}
+                onChangeText={(t) => setStoryForm({ ...storyForm, sort_order: t })}
+              />
+
+              <View style={styles.settingsCard}>
+                <SettingsRow
+                  styles={styles}
+                  label="Published"
+                  value={storyForm.is_published}
+                  onValueChange={(v: boolean) => setStoryForm({ ...storyForm, is_published: v })}
+                />
+                <SettingsRow
+                  styles={styles}
+                  label="Featured"
+                  value={storyForm.is_featured}
+                  onValueChange={(v: boolean) => setStoryForm({ ...storyForm, is_featured: v })}
+                />
+              </View>
+
+              <View style={{ gap: 12, marginTop: 20 }}>
+                {editingStoryId ? (
+                  <View>
+                    <TouchableOpacity
+                      style={[styles.applyBtn, { marginTop: 0 }]}
+                      onPress={handleUploadStoryPhoto}
+                      disabled={storiesSaving}
+                    >
+                      <Text style={styles.applyText}>
+                        {storyForm.photo_url ? 'Replace Photo' : 'Upload Photo'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {storyForm.photo_url ? (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#6B7280', marginBottom: 8 }}>
+                          Photo Preview
+                        </Text>
+                        <Image
+                          source={{ uri: storyForm.photo_url }}
+                          style={{ width: 180, height: 180, borderRadius: 16, backgroundColor: '#EEE' }}
+                          resizeMode="cover"
+                        />
+                      </View>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>
+                    Create the story first, then upload a photo.
+                  </Text>
+                )}
+
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <TouchableOpacity
+                    style={[styles.applyBtn, { flex: 1, marginTop: 0 }]}
+                    onPress={handleSaveStory}
+                    disabled={storiesSaving}
+                  >
+                    <Text style={styles.applyText}>
+                      {storiesSaving ? 'Saving...' : editingStoryId ? 'Update Story' : 'Create Story'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {editingStoryId ? (
+                    <TouchableOpacity
+                      style={[styles.applyBtn, { flex: 1, marginTop: 0, backgroundColor: '#DC2626' }]}
+                      onPress={() => handleDeleteStory(editingStoryId)}
+                      disabled={storiesSaving}
+                    >
+                      <Text style={styles.applyText}>Delete</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1092,14 +1495,14 @@ export default function AdminDashboard() {
 
       <Modal visible={activeModal === 'LOGS'} animationType="slide">
         <View style={styles.modalContentFull}>
-          <ModalHeader styles={styles} theme={theme} title="System Audit Logs" onClose={() => setActiveModal(null)} />
+          <ModalHeader styles={styles} title="System Audit Logs" onClose={() => setActiveModal(null)} />
           <AuditLogScreen />
         </View>
       </Modal>
 
       <Modal visible={activeModal === 'CHARTS'} animationType="slide">
         <View style={styles.modalContentFull}>
-          <ModalHeader styles={styles} theme={theme} title="Data Analytics" onClose={() => setActiveModal(null)} />
+          <ModalHeader styles={styles} title="Data Analytics" onClose={() => setActiveModal(null)} />
           <AnalyticsScreen />
         </View>
       </Modal>
@@ -1161,7 +1564,6 @@ export default function AdminDashboard() {
           </View>
         </View>
       </Modal>
-
     </View>
   );
 }
@@ -1172,7 +1574,7 @@ const SidebarIcon = ({ icon, label, active, onPress, styles, theme }: any) => (
     <Ionicons
       name={icon}
       size={24}
-      color={active ? theme.colors.text : theme.colors.mutedText}
+      color={active ? (theme?.colors?.text ?? '#11181C') : (theme?.colors?.mutedText ?? '#6B7280')}
       style={{ transformOrigin: 'center' } as any}
     />
     <Text style={[styles.sidebarLabel, active && styles.sidebarLabelActive]}>{label}</Text>
@@ -1201,11 +1603,11 @@ const UtilityBtn = ({ label, icon, color, onPress, styles }: any) => (
   </TouchableOpacity>
 );
 
-const ModalHeader = ({ title, onClose, styles, theme }: any) => (
+const ModalHeader = ({ title, onClose, styles }: any) => (
   <View style={styles.modalHeader}>
-    <Text style={{ fontWeight: '800', fontSize: 16, color: theme.colors.text }}>{title}</Text>
+    <Text style={{ fontWeight: '800', fontSize: 16, color: '#111827' }}>{title}</Text>
     <TouchableOpacity onPress={onClose}>
-      <Ionicons name="close" size={28} color={theme.colors.text} style={{ transformOrigin: 'center' } as any} />
+      <Ionicons name="close" size={28} color="#111827" style={{ transformOrigin: 'center' } as any} />
     </TouchableOpacity>
   </View>
 );
@@ -1218,7 +1620,14 @@ const clampInt = (raw: string, fallback: number, min: number, max: number): numb
 
 const SettingsNumberRow = ({ label, value, onChangeText, styles, hint }: any) => (
   <View style={[styles.settingsRow, { alignItems: 'flex-start', flexDirection: 'column' }]}>
-    <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+    <View
+      style={{
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}
+    >
       <Text style={styles.settingsRowLabel}>{label}</Text>
       <TextInput
         value={value}
@@ -1232,7 +1641,7 @@ const SettingsNumberRow = ({ label, value, onChangeText, styles, hint }: any) =>
             paddingVertical: 10,
             textAlign: 'center',
             borderWidth: 1,
-            borderColor: styles?.settingsRowBorderColor ?? undefined,
+            borderColor: '#E8D5C4',
           },
         ]}
         placeholder="5"
@@ -1253,7 +1662,9 @@ const SettingsRow = ({ label, value, onValueChange, styles }: any) => (
   </View>
 );
 
-const SectionHeader = ({ title, style, styles }: any) => <Text style={[styles.sectionTitle, style]}>{title}</Text>;
+const SectionHeader = ({ title, style, styles }: any) => (
+  <Text style={[styles.sectionTitle, style]}>{title}</Text>
+);
 
 function makeStyles(theme: any) {
   const bg = theme?.colors?.bg ?? '#FDF6EC';
@@ -1403,7 +1814,8 @@ function makeStyles(theme: any) {
       fontWeight: '900',
       letterSpacing: 0.3,
     },
-        calendarPage: {
+
+    calendarPage: {
       flex: 1,
       padding: 32,
       backgroundColor: bg,
@@ -1510,44 +1922,44 @@ function makeStyles(theme: any) {
       paddingVertical: 10,
     },
     slotComposerCard: {
-  backgroundColor: surface,
-  borderRadius: 20,
-  borderWidth: 1,
-  borderColor: border,
-  padding: 18,
-  marginBottom: 18,
-},
-slotComposerTitle: {
-  fontSize: 15,
-  fontWeight: '900',
-  color: text,
-},
-slotComposerSub: {
-  marginTop: 4,
-  fontSize: 12,
-  fontWeight: '700',
-  color: muted,
-},
-slotComposerRow: {
-  flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-  gap: 12,
-  marginTop: 14,
-  alignItems: Platform.OS === 'web' ? 'flex-end' : 'stretch',
-},
-slotTimeField: {
-  minWidth: 140,
-},
-slotTimeLabel: {
-  fontSize: 12,
-  fontWeight: '800',
-  color: muted,
-  marginBottom: 6,
-},
-  dangerBtnText: {
-    color: '#BE123C',
-    fontWeight: '700',
-  },
-      calendarDangerBtn: {
+      backgroundColor: surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 18,
+      marginBottom: 18,
+    },
+    slotComposerTitle: {
+      fontSize: 15,
+      fontWeight: '900',
+      color: text,
+    },
+    slotComposerSub: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '700',
+      color: muted,
+    },
+    slotComposerRow: {
+      flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+      gap: 12,
+      marginTop: 14,
+      alignItems: Platform.OS === 'web' ? 'flex-end' : 'stretch',
+    },
+    slotTimeField: {
+      minWidth: 140,
+    },
+    slotTimeLabel: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: muted,
+      marginBottom: 6,
+    },
+    dangerBtnText: {
+      color: '#BE123C',
+      fontWeight: '700',
+    },
+    calendarDangerBtn: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
@@ -1564,59 +1976,59 @@ slotTimeLabel: {
       fontSize: 13,
     },
     timePickerModal: {
-  backgroundColor: surface,
-  padding: 24,
-  borderRadius: 24,
-  width: 360,
-  maxWidth: '92%',
-  maxHeight: '75%',
-  borderWidth: 1,
-  borderColor: border,
-  ...Platform.select({
-    web: { boxShadow: '0 10px 25px rgba(0,0,0,0.1)' } as any,
-  }),
-},
-timePickerList: {
-  width: '100%',
-  marginTop: 4,
-},
-timePickerItem: {
-  paddingVertical: 12,
-  paddingHorizontal: 14,
-  borderRadius: 12,
-  marginBottom: 8,
-  backgroundColor: bg,
-  borderWidth: 1,
-  borderColor: border,
-},
-timePickerItemActive: {
-  backgroundColor: primary,
-  borderColor: primary,
-},
-timePickerItemText: {
-  fontSize: 14,
-  fontWeight: '800',
-  color: text,
-},
-timePickerItemTextActive: {
-  color: surface2,
-},
-slotTimeInput: {
-  backgroundColor: bg,
-  borderWidth: 1,
-  borderColor: border,
-  borderRadius: 12,
-  paddingHorizontal: 12,
-  paddingVertical: 12,
-  minHeight: 48,
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-},
-slotTimeInputText: {
-  fontSize: 14,
-  fontWeight: '800',
-  color: text,
-},
+      backgroundColor: surface,
+      padding: 24,
+      borderRadius: 24,
+      width: 360,
+      maxWidth: '92%',
+      maxHeight: '75%',
+      borderWidth: 1,
+      borderColor: border,
+      ...Platform.select({
+        web: { boxShadow: '0 10px 25px rgba(0,0,0,0.1)' } as any,
+      }),
+    },
+    timePickerList: {
+      width: '100%',
+      marginTop: 4,
+    },
+    timePickerItem: {
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+      marginBottom: 8,
+      backgroundColor: bg,
+      borderWidth: 1,
+      borderColor: border,
+    },
+    timePickerItemActive: {
+      backgroundColor: primary,
+      borderColor: primary,
+    },
+    timePickerItemText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: text,
+    },
+    timePickerItemTextActive: {
+      color: surface2,
+    },
+    slotTimeInput: {
+      backgroundColor: bg,
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    slotTimeInputText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: text,
+    },
   });
 }

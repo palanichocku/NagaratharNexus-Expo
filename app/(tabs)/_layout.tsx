@@ -26,6 +26,7 @@ const NAV: NavItem[] = [
   { label: 'Search', href: '/search', icon: 'search-outline' },
   { label: 'Moderator', href: '/moderator-chat', icon: 'calendar-outline' },
   { label: 'Favorites', href: '/favorites', icon: 'heart-outline' },
+  { label: 'Stories', href: '/success-stories', icon: 'sparkles-outline' },
   { label: 'Profile', href: '/profile', icon: 'person-circle-outline' },
   { label: 'News', href: '/news', icon: 'megaphone-outline' },
   { label: 'Settings', href: '/settings', icon: 'settings-outline' },
@@ -110,6 +111,7 @@ export default function TabLayout() {
           <Tabs.Screen name="search" options={{ href: '/search' }} />
           <Tabs.Screen name="moderator-chat" options={{ href: '/moderator-chat' }} />
           <Tabs.Screen name="favorites" options={{ href: '/favorites' }} />
+          <Tabs.Screen name="success-stories" options={{ href: '/success-stories' }} />
           <Tabs.Screen name="profile" options={{ href: '/profile' }} />
           <Tabs.Screen name="news" options={{ href: '/news' }} />
           <Tabs.Screen name="settings" options={{ href: '/settings' }} />
@@ -152,6 +154,16 @@ export default function TabLayout() {
           href: '/(tabs)/favorites',
           title: 'Favorites',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="heart.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="success-stories"
+        options={{
+          href: '/(tabs)/success-stories',
+          title: 'Stories',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="sparkles-outline" size={24} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
