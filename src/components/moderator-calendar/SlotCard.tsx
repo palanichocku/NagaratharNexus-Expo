@@ -1,11 +1,15 @@
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import type { ModeratorSlot } from '@/src/services/moderatorCalendar.service';
+import {
+  type ModeratorSlot,
+  getModeratorSlotDisplayStatus,
+} from '@/src/services/moderatorCalendar.service';
 import { slotLabelTriple } from '@/src/utils/timezone';
 
 type Props = {
   slot: ModeratorSlot;
   isModerator: boolean;
+  isAdmin?: boolean;
   isMine: boolean;
   onBook?: () => void;
   onCancel?: () => void;
@@ -16,6 +20,7 @@ type Props = {
 export default function SlotCard({
   slot,
   isModerator,
+  isAdmin = false,
   isMine,
   onBook,
   onCancel,
@@ -27,11 +32,18 @@ export default function SlotCard({
     [slot.slot_start_utc, slot.slot_end_utc]
   );
 
+  const displayStatus = useMemo(
+    () => getModeratorSlotDisplayStatus(slot),
+    [slot]
+  );
+
   const statusTone =
-    slot.status === 'OPEN'
+    displayStatus === 'OPEN'
       ? styles.open
-      : slot.status === 'BOOKED'
+      : displayStatus === 'BOOKED'
       ? styles.booked
+      : displayStatus === 'EXPIRED'
+      ? styles.expired
       : styles.blocked;
 
   return (
@@ -40,14 +52,14 @@ export default function SlotCard({
         <Text style={styles.timePrimary}>{labels.canada}</Text>
 
         <View style={styles.headerActions}>
-          {isModerator && slot.status === 'BOOKED' ? (
+          {isModerator && displayStatus === 'BOOKED' ? (
             <TouchableOpacity style={styles.headerActionPill} onPress={onCancel}>
               <Text style={styles.headerActionPillText}>Cancel</Text>
             </TouchableOpacity>
           ) : null}
 
           <View style={[styles.pill, statusTone]}>
-            <Text style={styles.pillText}>{slot.status}</Text>
+            <Text style={styles.pillText}>{displayStatus}</Text>
           </View>
         </View>
       </View>
@@ -56,20 +68,19 @@ export default function SlotCard({
       <Text style={styles.timeSecondary}>GMT: {labels.gmt}</Text>
 
       <View style={styles.actionsRow}>
-        {slot.status === 'OPEN' && !isModerator ? (
+        {displayStatus === 'OPEN' && !isModerator ? (
           <TouchableOpacity style={styles.primaryBtn} onPress={onBook}>
             <Text style={styles.primaryBtnText}>Book</Text>
           </TouchableOpacity>
-          
         ) : null}
 
-        {slot.status === 'OPEN' && isModerator ? (
+        {displayStatus === 'OPEN' && isModerator ? (
           <TouchableOpacity style={styles.dangerBtn} onPress={onDelete}>
             <Text style={styles.dangerBtnText}>Delete Slot</Text>
           </TouchableOpacity>
         ) : null}
 
-        {slot.status === 'BOOKED' && isMine ? (
+        {displayStatus === 'BOOKED' && isMine ? (
           <>
             <TouchableOpacity style={styles.secondaryBtn} onPress={onReschedule}>
               <Text style={styles.secondaryBtnText}>Reschedule</Text>
@@ -80,7 +91,7 @@ export default function SlotCard({
           </>
         ) : null}
 
-       {isModerator && slot.status === 'BOOKED' && (
+        {(isModerator || isAdmin) && displayStatus === 'BOOKED' && (
           <View style={styles.bookerPillRow}>
             <View style={styles.infoPill}>
               <Text style={styles.infoPillText}>Name: {slot.booked_by_name || '—'}</Text>
@@ -95,7 +106,6 @@ export default function SlotCard({
             </View>
           </View>
         )}
-
       </View>
     </View>
   );
@@ -134,6 +144,7 @@ const styles = StyleSheet.create({
   },
   open: { backgroundColor: '#ECFDF5' },
   booked: { backgroundColor: '#EFF6FF' },
+  expired: { backgroundColor: '#FEF2F2' },
   blocked: { backgroundColor: '#F3F4F6' },
   pillText: {
     fontSize: 12,
@@ -168,7 +179,7 @@ const styles = StyleSheet.create({
     color: '#111827',
     fontWeight: '700',
   },
-    dangerBtn: {
+  dangerBtn: {
     backgroundColor: '#FFF1F2',
     borderRadius: 12,
     paddingHorizontal: 14,
@@ -180,68 +191,44 @@ const styles = StyleSheet.create({
     color: '#BE123C',
     fontWeight: '700',
   },
-    bookedInfoBox: {
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 12,
+  },
+  headerActionPill: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  headerActionPillText: {
+    color: '#9A3412',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  bookerPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
+  },
+  infoPill: {
     backgroundColor: '#F9FAFB',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    maxWidth: '100%',
   },
-  bookedInfoTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 6,
-  },
-  bookedInfoLine: {
-    fontSize: 13,
+  infoPillText: {
     color: '#374151',
-    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '700',
+    flexShrink: 1,
   },
-  headerActions: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: 8,
-  marginLeft: 12,
-},
-
-headerActionPill: {
-  backgroundColor: '#FFF7ED',
-  borderWidth: 1,
-  borderColor: '#FDBA74',
-  borderRadius: 999,
-  paddingHorizontal: 10,
-  paddingVertical: 6,
-},
-
-headerActionPillText: {
-  color: '#9A3412',
-  fontSize: 12,
-  fontWeight: '800',
-},
-
-bookerPillRow: {
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  gap: 8,
-  marginTop: 10,
-},
-
-infoPill: {
-  backgroundColor: '#F9FAFB',
-  borderWidth: 1,
-  borderColor: '#E5E7EB',
-  borderRadius: 999,
-  paddingHorizontal: 10,
-  paddingVertical: 7,
-  maxWidth: '100%',
-},
-
-infoPillText: {
-  color: '#374151',
-  fontSize: 12,
-  fontWeight: '700',
-  flexShrink: 1,
-},
 });

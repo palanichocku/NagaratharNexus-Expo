@@ -20,6 +20,7 @@ import {
 import { CANADA_TIMEZONE, toYMDInTimeZone } from '@/src/utils/timezone';
 import { useFocusEffect } from '@react-navigation/native';
 
+
 type Role = 'ADMIN' | 'MODERATOR' | 'USER';
 
 const MAX_DAYS_AHEAD = 28;
@@ -58,7 +59,10 @@ export default function ModeratorChatScreen() {
   const today = useMemo(() => startOfDay(new Date()), []);
   const maxDay = useMemo(() => startOfDay(addDays(new Date(), MAX_DAYS_AHEAD)), []);
 
-  const isModerator = role === 'MODERATOR' || role === 'ADMIN';
+  const isModerator = role === 'MODERATOR';
+  const isAdmin = role === 'ADMIN';
+  const canCreateSlots = isModerator;
+  const canViewModeratorCalendars = isModerator || isAdmin;
 
   const dayLabel = useMemo(
     () => toYMDInTimeZone(selectedDay, CANADA_TIMEZONE),
@@ -184,26 +188,33 @@ export default function ModeratorChatScreen() {
     }
   };
 
-  const bookSlot = async (slotId: string) => {
-    try {
-      setSaving(true);
+  const bookSlot = async (slot: ModeratorSlot) => {
+  try {
+    const displayStatus = getModeratorSlotDisplayStatus(slot);
 
-      if (rescheduleFromSlotId) {
-        await moderatorCalendarService.reschedule(rescheduleFromSlotId, slotId);
-        setRescheduleFromSlotId(null);
-        Alert.alert('Rescheduled', 'Your appointment has been moved.');
-      } else {
-        await moderatorCalendarService.bookSlot(slotId);
-        Alert.alert('Booked', 'Your slot has been reserved.');
-      }
-
-      await load();
-    } catch (e: any) {
-      Alert.alert('Unable to save', e.message ?? 'Please try again');
-    } finally {
-      setSaving(false);
+    if (displayStatus === 'EXPIRED') {
+      Alert.alert('Slot expired', 'This slot is no longer available.');
+      return;
     }
-  };
+
+    setSaving(true);
+
+    if (rescheduleFromSlotId) {
+      await moderatorCalendarService.reschedule(rescheduleFromSlotId, slot.id);
+      setRescheduleFromSlotId(null);
+      Alert.alert('Rescheduled', 'Your appointment has been moved.');
+    } else {
+      await moderatorCalendarService.bookSlot(slot.id);
+      Alert.alert('Booked', 'Your slot has been reserved.');
+    }
+
+    await load();
+  } catch (e: any) {
+    Alert.alert('Unable to save', e.message ?? 'Please try again');
+  } finally {
+    setSaving(false);
+  }
+};
 
   const cancelSlot = async (slotId: string) => {
     try {
@@ -252,7 +263,7 @@ export default function ModeratorChatScreen() {
             </Text>
           </View>
 
-          {isModerator ? (
+         {canCreateSlots ? (
             <TouchableOpacity style={styles.createBtn} onPress={createDefaultDaySlots} disabled={saving}>
               <Ionicons name="add-circle-outline" size={18} color="#111827" />
               <Text style={styles.createBtnText}>Add Day Slots</Text>
@@ -260,7 +271,7 @@ export default function ModeratorChatScreen() {
           ) : null}
         </View>
 
-        {!isModerator ? (
+       {(role === 'USER' || isAdmin) ? (
           <View style={styles.moderatorSection}>
             <Text style={styles.sectionLabel}>Choose Moderator</Text>
             <ScrollView
@@ -357,8 +368,9 @@ export default function ModeratorChatScreen() {
                     key={slot.id}
                     slot={slot}
                     isModerator={isModerator}
+                    isAdmin={isAdmin}
                     isMine={isMine}
-                    onBook={() => bookSlot(slot.id)}
+                    onBook={() => bookSlot(slot)}
                     onCancel={() => cancelSlot(slot.id)}
                     onReschedule={() => setRescheduleFromSlotId(slot.id)}
                     onDelete={() => deleteSlot(slot.id)}

@@ -34,6 +34,7 @@ import SlotCard from '@/src/components/moderator-calendar/SlotCard';
 import {
   moderatorCalendarService,
   type ModeratorSlot,
+  type ModeratorDirectoryItem,
 } from '@/src/services/moderatorCalendar.service';
 import {
   CANADA_TIMEZONE,
@@ -99,7 +100,7 @@ export default function AdminDashboard() {
   const [initError, setInitError] = useState<string | null>(null);
 
   // --- ROLE & IDENTITY ---
-  const [userRole, setUserRole] = useState<string>('MODERATOR');
+  const [userRole, setUserRole] = useState<string>('');
   const [adminName, setAdminName] = useState('');
   const isSysAdmin = useMemo(() => userRole === 'ADMIN', [userRole]);
 
@@ -156,20 +157,67 @@ export default function AdminDashboard() {
   });
 
   // --- CALENDAR STATE ---
-  const [calendarLoading, setCalendarLoading] = useState(false);
-  const [calendarSaving, setCalendarSaving] = useState(false);
-  const [calendarSlots, setCalendarSlots] = useState<ModeratorSlot[]>([]);
-  const [calendarUserId, setCalendarUserId] = useState<string | null>(null);
-  const [calendarDay, setCalendarDay] = useState(() => new Date());
-  const [rescheduleFromSlotId, setRescheduleFromSlotId] = useState<string | null>(null);
-  const [slotStartTime, setSlotStartTime] = useState('09:00');
-  const [slotEndTime, setSlotEndTime] = useState('17:00');
-  const [timePickerMode, setTimePickerMode] = useState<'START' | 'END' | null>(null);
+const MAX_DAYS_AHEAD = 28;
 
-  const calendarDayLabel = useMemo(
-    () => toYMDInTimeZone(calendarDay, CANADA_TIMEZONE),
-    [calendarDay]
-  );
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function isBeforeDay(a: Date, b: Date) {
+  return startOfDay(a).getTime() < startOfDay(b).getTime();
+}
+
+function isAfterDay(a: Date, b: Date) {
+  return startOfDay(a).getTime() > startOfDay(b).getTime();
+}
+
+const [calendarLoading, setCalendarLoading] = useState(false);
+const [calendarSaving, setCalendarSaving] = useState(false);
+const [calendarSlots, setCalendarSlots] = useState<ModeratorSlot[]>([]);
+const [calendarUserId, setCalendarUserId] = useState<string | null>(null);
+const [calendarDay, setCalendarDay] = useState(() => startOfDay(new Date()));
+const [rescheduleFromSlotId, setRescheduleFromSlotId] = useState<string | null>(null);
+const [slotStartTime, setSlotStartTime] = useState('09:00');
+const [slotEndTime, setSlotEndTime] = useState('17:00');
+const [timePickerMode, setTimePickerMode] = useState<'START' | 'END' | null>(null);
+
+const [calendarModerators, setCalendarModerators] = useState<ModeratorDirectoryItem[]>([]);
+const [selectedCalendarModeratorId, setSelectedCalendarModeratorId] = useState<string | null>(null);
+
+const isCalendarModerator = userRole === 'MODERATOR';
+const isCalendarAdmin = userRole === 'ADMIN';
+const canCreateCalendarSlots = isCalendarModerator;
+
+const today = useMemo(() => startOfDay(new Date()), []);
+const maxCalendarDay = useMemo(() => startOfDay(addDays(new Date(), MAX_DAYS_AHEAD)), []);
+
+const calendarDayLabel = useMemo(
+  () => toYMDInTimeZone(calendarDay, CANADA_TIMEZONE),
+  [calendarDay]
+);
+
+const selectedCalendarModerator = useMemo(
+  () => calendarModerators.find((m) => m.id === selectedCalendarModeratorId) ?? null,
+  [calendarModerators, selectedCalendarModeratorId]
+);
+
+const canGoCalendarPrev = useMemo(
+  () => !isBeforeDay(addDays(calendarDay, -1), today),
+  [calendarDay, today]
+);
+
+const canGoCalendarNext = useMemo(
+  () => !isAfterDay(addDays(calendarDay, 1), maxCalendarDay),
+  [calendarDay, maxCalendarDay]
+);
 
   const loadStories = useCallback(async () => {
     setStoriesLoading(true);
@@ -422,52 +470,85 @@ export default function AdminDashboard() {
   }, []);
 
   const loadCalendar = useCallback(async () => {
-    setCalendarLoading(true);
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+  setCalendarLoading(true);
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-      if (!user) throw new Error('Not signed in');
+    if (!user) throw new Error('Not signed in');
 
-      setCalendarUserId(user.id);
+    setCalendarUserId(user.id);
 
-      const start = new Date(calendarDay);
-      start.setHours(0, 0, 0, 0);
+    const start = new Date(calendarDay);
+    start.setHours(0, 0, 0, 0);
 
-      const end = new Date(calendarDay);
-      end.setDate(end.getDate() + 1);
-      end.setHours(0, 0, 0, 0);
+    const end = new Date(calendarDay);
+    end.setDate(end.getDate() + 1);
+    end.setHours(0, 0, 0, 0);
 
-      const data = await moderatorCalendarService.getSlotsForRangeWithBookingDetails(
+    if (userRole === 'MODERATOR') {
+      const data = await moderatorCalendarService.getMyModeratorSlotsForRange(
+        start.toISOString(),
+        end.toISOString()
+      );
+      setCalendarSlots(data);
+      setSelectedCalendarModeratorId(user.id);
+      return;
+    }
+
+    if (userRole === 'ADMIN') {
+      const moderatorList = await moderatorCalendarService.getActiveModerators();
+      setCalendarModerators(moderatorList);
+
+      const effectiveModeratorId =
+        selectedCalendarModeratorId &&
+        moderatorList.some((m) => m.id === selectedCalendarModeratorId)
+          ? selectedCalendarModeratorId
+          : moderatorList[0]?.id ?? null;
+
+      setSelectedCalendarModeratorId(effectiveModeratorId);
+
+      if (!effectiveModeratorId) {
+        setCalendarSlots([]);
+        return;
+      }
+
+      const data = await moderatorCalendarService.getModeratorSlotsWithBookingDetails(
+        effectiveModeratorId,
         start.toISOString(),
         end.toISOString()
       );
 
       setCalendarSlots(data);
-    } catch (e: any) {
-      console.error('Calendar load failed:', e);
-      if (activeTab === 'CALENDAR') {
-        dialog.show({
-          title: 'Error',
-          message: e?.message ?? 'Failed to load calendar',
-          tone: 'error',
-        });
-      }
-    } finally {
-      setCalendarLoading(false);
+      return;
     }
-  }, [calendarDay, activeTab, dialog]);
+
+    setCalendarSlots([]);
+  } catch (e: any) {
+    console.error('Calendar load failed:', e);
+    if (activeTab === 'CALENDAR') {
+      dialog.show({
+        title: 'Error',
+        message: e?.message ?? 'Failed to load calendar',
+        tone: 'error',
+      });
+    }
+  } finally {
+    setCalendarLoading(false);
+  }
+}, [calendarDay, activeTab, dialog, userRole, selectedCalendarModeratorId]);
 
   useEffect(() => {
-    if (activeTab !== 'CALENDAR') return;
+  if (activeTab !== 'CALENDAR') return;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  setCalendarDay(startOfDay(new Date()));
+  setRescheduleFromSlotId(null);
 
-    setCalendarDay(today);
-    setRescheduleFromSlotId(null);
-  }, [activeTab]);
+  if (userRole !== 'ADMIN') {
+    setSelectedCalendarModeratorId(null);
+  }
+}, [activeTab, userRole]);
 
   useEffect(() => {
     if (activeTab !== 'CALENDAR') return;
@@ -485,45 +566,75 @@ export default function AdminDashboard() {
   }, [activeTab, loadCalendar]);
 
   const createSlotsForSelectedWindow = useCallback(async () => {
-    try {
-      if (!slotStartTime || !slotEndTime) {
-        dialog.show({
-          title: 'Missing Time',
-          message: 'Please enter both start and end time.',
-          tone: 'error',
-        });
-        return;
-      }
+  try {
+    if (!canCreateCalendarSlots) return;
 
-      if (slotEndTime <= slotStartTime) {
-        dialog.show({
-          title: 'Invalid Range',
-          message: 'End time must be after start time.',
-          tone: 'error',
-        });
-        return;
-      }
-
-      setCalendarSaving(true);
-
-      await moderatorCalendarService.createSlotsForDay(
-        calendarDayLabel,
-        slotStartTime,
-        slotEndTime,
-        CANADA_TIMEZONE
-      );
-
-      await loadCalendar();
-    } catch (e: any) {
+    if (isBeforeDay(calendarDay, today)) {
       dialog.show({
-        title: 'Error',
-        message: e.message ?? 'Please try again',
+        title: 'Invalid day',
+        message: 'You can only open slots from today onward.',
         tone: 'error',
       });
-    } finally {
-      setCalendarSaving(false);
+      return;
     }
-  }, [calendarDayLabel, loadCalendar, slotStartTime, slotEndTime, dialog]);
+
+    if (isAfterDay(calendarDay, maxCalendarDay)) {
+      dialog.show({
+        title: 'Invalid day',
+        message: 'You can only open slots up to 4 weeks ahead.',
+        tone: 'error',
+      });
+      return;
+    }
+
+    if (!slotStartTime || !slotEndTime) {
+      dialog.show({
+        title: 'Missing Time',
+        message: 'Please enter both start and end time.',
+        tone: 'error',
+      });
+      return;
+    }
+
+    if (slotEndTime <= slotStartTime) {
+      dialog.show({
+        title: 'Invalid Range',
+        message: 'End time must be after start time.',
+        tone: 'error',
+      });
+      return;
+    }
+
+    setCalendarSaving(true);
+
+    await moderatorCalendarService.createSlotsForDay(
+      calendarDayLabel,
+      slotStartTime,
+      slotEndTime,
+      CANADA_TIMEZONE
+    );
+
+    await loadCalendar();
+  } catch (e: any) {
+    dialog.show({
+      title: 'Error',
+      message: e.message ?? 'Please try again',
+      tone: 'error',
+    });
+  } finally {
+    setCalendarSaving(false);
+  }
+}, [
+  canCreateCalendarSlots,
+  calendarDay,
+  today,
+  maxCalendarDay,
+  slotStartTime,
+  slotEndTime,
+  calendarDayLabel,
+  loadCalendar,
+  dialog,
+]);
 
   const handleDeleteCalendarSlot = useCallback(
     (slotId: string) => {
@@ -608,41 +719,107 @@ export default function AdminDashboard() {
     [loadCalendar, dialog, toast]
   );
 
-  const shiftCalendarDay = useCallback((delta: number) => {
-    const next = new Date(calendarDay);
-    next.setDate(next.getDate() + delta);
+  const shiftCalendarDay = useCallback(
+  (delta: number) => {
+    const next = addDays(calendarDay, delta);
+
+    if (isBeforeDay(next, today)) return;
+    if (isAfterDay(next, maxCalendarDay)) return;
+
     setCalendarDay(next);
-  }, [calendarDay]);
+  },
+  [calendarDay, today, maxCalendarDay]
+);
 
-  const renderModeratorCalendar = () => (
-    <View style={styles.calendarPage}>
-      <View style={styles.calendarHeader}>
-        <View>
-          <Text style={styles.settingsTitle}>Moderator Calendar</Text>
-          <Text style={styles.calendarSubtitle}>
-            Toronto, IST, and GMT shown together
-          </Text>
-        </View>
+const renderModeratorCalendar = () => (
+  <View style={styles.calendarPage}>
+    <View style={styles.calendarHeader}>
+      <View>
+        <Text style={styles.settingsTitle}>
+          {isCalendarAdmin ? 'Moderator Calendars' : 'Moderator Calendar'}
+        </Text>
+        <Text style={styles.calendarSubtitle}>
+          Toronto, IST, and GMT shown together
+        </Text>
       </View>
+    </View>
 
-      <View style={styles.calendarDayBar}>
-        <TouchableOpacity
-          onPress={() => shiftCalendarDay(-1)}
-          style={styles.calendarDayArrow}
+    {isCalendarAdmin ? (
+      <View style={styles.calendarModeratorSection}>
+        <Text style={styles.calendarModeratorLabel}>Choose Moderator</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.calendarModeratorPillRow}
         >
-          <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
-        </TouchableOpacity>
+          {calendarModerators.map((moderator) => {
+            const active = moderator.id === selectedCalendarModeratorId;
 
+            return (
+              <TouchableOpacity
+                key={moderator.id}
+                style={[
+                  styles.calendarModeratorPill,
+                  active && styles.calendarModeratorPillActive,
+                ]}
+                onPress={() => {
+                  setSelectedCalendarModeratorId(moderator.id);
+                  setRescheduleFromSlotId(null);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.calendarModeratorPillText,
+                    active && styles.calendarModeratorPillTextActive,
+                  ]}
+                >
+                  {moderator.full_name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        <Text style={styles.calendarModeratorHelper}>
+          {selectedCalendarModerator
+            ? `Showing ${selectedCalendarModerator.full_name}'s calendar`
+            : 'No moderators available right now'}
+        </Text>
+      </View>
+    ) : null}
+
+    <View style={styles.calendarDayBar}>
+      <TouchableOpacity
+        onPress={() => shiftCalendarDay(-1)}
+        style={[styles.calendarDayArrow, !canGoCalendarPrev && styles.calendarDayArrowDisabled]}
+        disabled={!canGoCalendarPrev}
+      >
+        <Ionicons
+          name="chevron-back"
+          size={18}
+          color={canGoCalendarPrev ? theme.colors.text : theme.colors.mutedText}
+        />
+      </TouchableOpacity>
+
+      <View style={styles.calendarDayTextWrap}>
         <Text style={styles.calendarDayText}>{calendarDayLabel}</Text>
-
-        <TouchableOpacity
-          onPress={() => shiftCalendarDay(1)}
-          style={styles.calendarDayArrow}
-        >
-          <Ionicons name="chevron-forward" size={18} color={theme.colors.text} />
-        </TouchableOpacity>
+        <Text style={styles.calendarDayHint}>Available from today through 4 weeks ahead</Text>
       </View>
 
+      <TouchableOpacity
+        onPress={() => shiftCalendarDay(1)}
+        style={[styles.calendarDayArrow, !canGoCalendarNext && styles.calendarDayArrowDisabled]}
+        disabled={!canGoCalendarNext}
+      >
+        <Ionicons
+          name="chevron-forward"
+          size={18}
+          color={canGoCalendarNext ? theme.colors.text : theme.colors.mutedText}
+        />
+      </TouchableOpacity>
+    </View>
+
+    {canCreateCalendarSlots ? (
       <View style={styles.slotComposerCard}>
         <Text style={styles.slotComposerTitle}>Create Availability</Text>
         <Text style={styles.slotComposerSub}>
@@ -677,11 +854,7 @@ export default function AdminDashboard() {
             onPress={createSlotsForSelectedWindow}
             disabled={calendarSaving}
           >
-            <Ionicons
-              name="add-circle-outline"
-              size={18}
-              color={theme.colors.text}
-            />
+            <Ionicons name="add-circle-outline" size={18} color={theme.colors.text} />
             <Text style={styles.calendarCreateBtnText}>Add Slots</Text>
           </TouchableOpacity>
 
@@ -733,65 +906,69 @@ export default function AdminDashboard() {
           </TouchableOpacity>
         </View>
       </View>
+    ) : isCalendarAdmin ? (
+      <View style={styles.calendarReadOnlyCard}>
+        <Text style={styles.calendarReadOnlyTitle}>Read-only view</Text>
+        <Text style={styles.calendarReadOnlySub}>
+          Admins can inspect all moderator calendars, but only moderators can create or clear slots.
+        </Text>
+      </View>
+    ) : null}
 
-      {rescheduleFromSlotId ? (
-        <View style={styles.calendarBanner}>
-          <Text style={styles.calendarBannerText}>
-            Choose a new open slot to finish rescheduling.
-          </Text>
-          <TouchableOpacity onPress={() => setRescheduleFromSlotId(null)}>
-            <Text style={styles.calendarBannerLink}>Clear</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
+    {calendarLoading ? (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={styles.loadingText}>Loading calendar...</Text>
+      </View>
+    ) : (
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.calendarListContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {calendarSlots.length === 0 ? (
+          <View style={styles.calendarEmptyCard}>
+            <Text style={styles.calendarEmptyTitle}>No slots yet</Text>
+            <Text style={styles.calendarEmptySub}>
+              {canCreateCalendarSlots
+                ? 'Create availability for this day to start taking bookings.'
+                : 'No moderator slots are available for this day yet.'}
+            </Text>
+          </View>
+        ) : (
+          calendarSlots.map((slot) => {
+            const isMine = !!calendarUserId && slot.booked_by_user_id === calendarUserId;
 
-      {calendarLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Loading calendar...</Text>
-        </View>
-      ) : (
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.calendarListContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {calendarSlots.length === 0 ? (
-            <View style={styles.calendarEmptyCard}>
-              <Text style={styles.calendarEmptyTitle}>No slots yet</Text>
-              <Text style={styles.calendarEmptySub}>
-                Create availability for this day to start taking bookings.
-              </Text>
-            </View>
-          ) : (
-            calendarSlots.map((slot) => {
-              const isMine =
-                !!calendarUserId && slot.booked_by_user_id === calendarUserId;
+            return (
+              <SlotCard
+                key={slot.id}
+                slot={slot}
+                isModerator={isCalendarModerator}
+                isAdmin={isCalendarAdmin}
+                isMine={isMine}
+                onCancel={
+                  isCalendarModerator ? () => handleCancelCalendarSlot(slot.id) : undefined
+                }
+                onReschedule={
+                  isCalendarModerator ? () => setRescheduleFromSlotId(slot.id) : undefined
+                }
+                onDelete={
+                  isCalendarModerator ? () => handleDeleteCalendarSlot(slot.id) : undefined
+                }
+              />
+            );
+          })
+        )}
+      </ScrollView>
+    )}
 
-              return (
-                <SlotCard
-                  key={slot.id}
-                  slot={slot}
-                  isModerator={true}
-                  isMine={isMine}
-                  onBook={() => handleBookCalendarSlot(slot.id)}
-                  onCancel={() => handleCancelCalendarSlot(slot.id)}
-                  onReschedule={() => setRescheduleFromSlotId(slot.id)}
-                  onDelete={() => handleDeleteCalendarSlot(slot.id)}
-                />
-              );
-            })
-          )}
-        </ScrollView>
-      )}
-
-      {calendarSaving ? (
-        <View style={styles.calendarSavingOverlay}>
-          <ActivityIndicator size="small" color={theme.colors.primary} />
-        </View>
-      ) : null}
-    </View>
-  );
+    {calendarSaving ? (
+      <View style={styles.calendarSavingOverlay}>
+        <ActivityIndicator size="small" color={theme.colors.primary} />
+      </View>
+    ) : null}
+  </View>
+);
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -2030,5 +2207,75 @@ function makeStyles(theme: any) {
       fontWeight: '800',
       color: text,
     },
+    calendarModeratorSection: {
+  marginBottom: 14,
+},
+calendarModeratorLabel: {
+  fontSize: 13,
+  fontWeight: '800',
+  color: text,
+  marginBottom: 8,
+},
+calendarModeratorPillRow: {
+  gap: 8,
+  paddingRight: 10,
+},
+calendarModeratorPill: {
+  backgroundColor: surface2,
+  borderWidth: 1,
+  borderColor: border,
+  borderRadius: 999,
+  paddingHorizontal: 14,
+  paddingVertical: 10,
+},
+calendarModeratorPillActive: {
+  backgroundColor: primary,
+  borderColor: primary,
+},
+calendarModeratorPillText: {
+  color: text,
+  fontWeight: '700',
+},
+calendarModeratorPillTextActive: {
+  color: surface2,
+},
+calendarModeratorHelper: {
+  marginTop: 8,
+  color: muted,
+  fontSize: 13,
+  fontWeight: '600',
+},
+calendarDayArrowDisabled: {
+  opacity: 0.5,
+},
+calendarDayTextWrap: {
+  alignItems: 'center',
+},
+calendarDayHint: {
+  marginTop: 4,
+  fontSize: 12,
+  color: muted,
+  fontWeight: '700',
+},
+calendarReadOnlyCard: {
+  backgroundColor: surface,
+  borderRadius: 20,
+  borderWidth: 1,
+  borderColor: border,
+  padding: 18,
+  marginBottom: 18,
+},
+calendarReadOnlyTitle: {
+  fontSize: 15,
+  fontWeight: '900',
+  color: text,
+},
+calendarReadOnlySub: {
+  marginTop: 6,
+  fontSize: 12,
+  fontWeight: '700',
+  color: muted,
+  lineHeight: 18,
+},
   });
 }

@@ -1,6 +1,7 @@
 import { supabase } from '@/src/lib/supabase';
 
 export type ModeratorSlotStatus = 'OPEN' | 'BOOKED' | 'BLOCKED' | 'CANCELLED';
+export type ModeratorSlotDisplayStatus = ModeratorSlotStatus | 'EXPIRED';
 
 export type ModeratorSlot = {
   id: string;
@@ -27,6 +28,19 @@ export type ModeratorDirectoryItem = {
   full_name: string;
   email: string | null;
 };
+
+export function getModeratorSlotDisplayStatus(
+  slot: ModeratorSlot
+): ModeratorSlotDisplayStatus {
+  if (
+    slot.status === 'OPEN' &&
+    new Date(slot.slot_end_utc).getTime() <= Date.now()
+  ) {
+    return 'EXPIRED';
+  }
+
+  return slot.status;
+}
 
 export const moderatorCalendarService = {
   async getActiveModerators() {
