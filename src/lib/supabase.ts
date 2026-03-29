@@ -2,30 +2,47 @@ import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
-import Constants from 'expo-constants'; // Import Expo Constants
+import Constants from 'expo-constants';
 
-// Access the dynamic extra field from app.config.js
 const extra = Constants.expoConfig?.extra || {};
 
-// Priority: Expo Constants (app.config.js) -> process.env -> fallback
-// Sanitize function to strip any non-visible characters/whitespace
-const sanitize = (str: string) => str.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
-const supabaseUrl = sanitize(extra.supabaseUrl || '');
-const supabaseAnonKey = sanitize(extra.supabaseAnonKey || '');
-const nativeRedirectUrl = extra.nativeRedirectUrl || '';
-const appEnv = (extra.appEnv || 'dev').toLowerCase();
+const sanitize = (value: unknown) =>
+  String(value ?? '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim();
 
-// Partitioned storage key to prevent session hijacking between Dev/Prod
+// Prefer Expo manifest extra, then direct env fallback.
+// This makes Vercel builds work even if app.config.js did not inject `extra`.
+const supabaseUrl = sanitize(
+  extra.supabaseUrl ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL
+);
+
+const supabaseAnonKey = sanitize(
+  extra.supabaseAnonKey ??
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.SUPABASE_ANON_KEY
+);
+
+const nativeRedirectUrl = sanitize(
+  extra.nativeRedirectUrl ?? process.env.EXPO_PUBLIC_NATIVE_REDIRECT_URL
+);
+
+const appEnv = sanitize(
+  extra.appEnv ?? process.env.EXPO_PUBLIC_APP_ENV ?? process.env.APP_ENV ?? 'dev'
+).toLowerCase();
+
 const STORAGE_KEY = `nn-auth-v2-${appEnv}`;
 
 console.log('[SUPABASE MANIFEST CONFIG]', {
   appEnv,
-  supabaseUrl,
-  storageKey: STORAGE_KEY
+  hasExpoExtra: !!Constants.expoConfig?.extra,
+  supabaseUrlPresent: !!supabaseUrl,
+  supabaseUrlLength: supabaseUrl.length,
+  storageKey: STORAGE_KEY,
 });
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('⚠️ Supabase credentials missing! Check your environment file.');
+  console.warn('⚠️ Supabase credentials missing! Check environment variables.');
 }
 
 function resolveRedirectUrl() {
@@ -48,6 +65,7 @@ const fetchWithTimeout: typeof fetch = (input, init) => {
 };
 
 const isWeb = Platform.OS === 'web';
+
 const storage = isWeb
   ? typeof window !== 'undefined'
     ? AsyncStorage
@@ -64,7 +82,7 @@ console.log('[SUPABASE CONFIG]', {
   appEnv,
   supabaseUrl,
   redirectUrl: REDIRECT_URL,
-  storageKey: STORAGE_KEY
+  storageKey: STORAGE_KEY,
 });
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -74,7 +92,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: true,
     flowType: 'pkce',
-    storageKey: STORAGE_KEY, // Isolated per environment
+    storageKey: STORAGE_KEY,
   },
   global: { fetch: fetchWithTimeout },
 });
