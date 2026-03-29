@@ -158,7 +158,6 @@ export default function AnalyticsScreen() {
           name={icon}
           size={18}
           color={theme.colors.text}
-          style={{ transformOrigin: 'center' } as any}
         />
         <View style={{ flex: 1 }}>
           <Text style={styles.cardTitle}>{title}</Text>
@@ -219,7 +218,6 @@ export default function AnalyticsScreen() {
                 name={k.icon}
                 size={16}
                 color={theme.colors.text}
-                style={{ transformOrigin: 'center' } as any}
               />
               <View style={{ flex: 1 }}>
                 <Text style={styles.kpiValue}>{Number(k.value || 0).toLocaleString()}</Text>

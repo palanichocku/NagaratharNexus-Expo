@@ -9,18 +9,21 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { supabase } from '../../src/lib/supabase';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
+import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToastContext } from '@/src/ui/feedback/ToastProvider';
 
 export default function SetPasswordScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const dialog = useDialog();
+  const toast = useToastContext();
 
   const { theme } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -28,7 +31,11 @@ export default function SetPasswordScreen() {
   const handleUpdatePassword = async () => {
     if (!password || password !== confirmPassword) {
       const msg = 'Passwords do not match!';
-      Platform.OS === 'web' ? alert(msg) : Alert.alert('Error', msg);
+      dialog.show({
+        title: 'Error',
+        message: msg,
+        tone: 'error',
+      });
       return;
     }
 
@@ -48,7 +55,11 @@ export default function SetPasswordScreen() {
 
       if (!session) {
         const msg = 'Auth session missing! Please click the link in your email again.';
-        Platform.OS === 'web' ? alert(msg) : Alert.alert('Session Error', msg);
+        dialog.show({
+          title: 'Session Error',
+          message: msg,
+          tone: 'error',
+        });
         setLoading(false);
         return;
       }
@@ -61,7 +72,11 @@ export default function SetPasswordScreen() {
 
     if (authError || !data.user) {
       const msg = authError?.message || 'Link expired.';
-      Platform.OS === 'web' ? alert(msg) : Alert.alert('Error', msg);
+      dialog.show({
+        title: 'Error',
+        message: msg,
+        tone: 'error',
+      });
       setLoading(false);
       return;
     }
@@ -86,8 +101,7 @@ export default function SetPasswordScreen() {
       // We don't block progress here because the password IS set
     }
 
-    const successMsg = 'Success! Your account is ready.';
-    Platform.OS === 'web' ? alert(successMsg) : Alert.alert('Ready', successMsg);
+    toast.show('Success! Your account is ready.', 'success');
 
     // 🎯 Use the clean path fixed in RootLayout
     router.replace('/AdminDashboard');
@@ -200,7 +214,10 @@ function makeStyles(theme: any) {
       shadowOffset: { width: 0, height: 12 },
       elevation: 3,
       ...(Platform.OS === 'web'
-        ? ({ boxShadow: '0 20px 25px -5px rgba(0,0,0,0.10), 0 10px 10px -5px rgba(0,0,0,0.04)' } as any)
+        ? ({
+            boxShadow:
+              '0 20px 25px -5px rgba(0,0,0,0.10), 0 10px 10px -5px rgba(0,0,0,0.04)',
+          } as any)
         : null),
     },
 

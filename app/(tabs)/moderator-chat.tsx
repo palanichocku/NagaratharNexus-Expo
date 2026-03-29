@@ -7,8 +7,10 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
+  Linking,
+  Platform,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/src/lib/supabase';
 import SlotCard from '@/src/components/moderator-calendar/SlotCard';
@@ -16,10 +18,12 @@ import {
   moderatorCalendarService,
   type ModeratorSlot,
   type ModeratorDirectoryItem,
+  getModeratorSlotDisplayStatus,
 } from '@/src/services/moderatorCalendar.service';
 import { CANADA_TIMEZONE, toYMDInTimeZone } from '@/src/utils/timezone';
 import { useFocusEffect } from '@react-navigation/native';
-
+import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToast } from '@/src/ui/feedback/useToast';
 
 type Role = 'ADMIN' | 'MODERATOR' | 'USER';
 
@@ -45,6 +49,18 @@ function isAfterDay(a: Date, b: Date) {
   return startOfDay(a).getTime() > startOfDay(b).getTime();
 }
 
+function sanitizePhoneForWhatsApp(phone?: string | null) {
+  if (!phone) return '';
+  return phone.replace(/[^\d]/g, '');
+}
+
+function buildModeratorReadyMessage(memberName?: string | null, moderatorName?: string | null) {
+  const safeMemberName = memberName?.trim() || 'Member';
+  const safeModeratorName = moderatorName?.trim() || 'the moderator';
+
+  return `Hello ${safeMemberName}, this is ${safeModeratorName} from Nagarathar Nexus. I’m ready for our scheduled meeting now. Please reply here when you are ready to begin.`;
+}
+
 export default function ModeratorChatScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -55,6 +71,10 @@ export default function ModeratorChatScreen() {
   const [rescheduleFromSlotId, setRescheduleFromSlotId] = useState<string | null>(null);
   const [moderators, setModerators] = useState<ModeratorDirectoryItem[]>([]);
   const [selectedModeratorId, setSelectedModeratorId] = useState<string | null>(null);
+  const [currentUserName, setCurrentUserName] = useState<string>('');
+
+  const dialog = useDialog();
+  const toast = useToast();
 
   const today = useMemo(() => startOfDay(new Date()), []);
   const maxDay = useMemo(() => startOfDay(addDays(new Date(), MAX_DAYS_AHEAD)), []);
@@ -62,7 +82,6 @@ export default function ModeratorChatScreen() {
   const isModerator = role === 'MODERATOR';
   const isAdmin = role === 'ADMIN';
   const canCreateSlots = isModerator;
-  const canViewModeratorCalendars = isModerator || isAdmin;
 
   const dayLabel = useMemo(
     () => toYMDInTimeZone(selectedDay, CANADA_TIMEZONE),
@@ -74,8 +93,15 @@ export default function ModeratorChatScreen() {
     [moderators, selectedModeratorId]
   );
 
-  const canGoPrev = useMemo(() => !isBeforeDay(addDays(selectedDay, -1), today), [selectedDay, today]);
-  const canGoNext = useMemo(() => !isAfterDay(addDays(selectedDay, 1), maxDay), [selectedDay, maxDay]);
+  const canGoPrev = useMemo(
+    () => !isBeforeDay(addDays(selectedDay, -1), today),
+    [selectedDay, today]
+  );
+
+  const canGoNext = useMemo(
+    () => !isAfterDay(addDays(selectedDay, 1), maxDay),
+    [selectedDay, maxDay]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,11 +114,13 @@ export default function ModeratorChatScreen() {
 
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, full_name')
         .eq('id', authUser.id)
         .single();
 
       if (profileError) throw profileError;
+
+      setCurrentUserName(profile?.full_name ?? '');
 
       const nextRole = (profile?.role ?? 'USER').toUpperCase() as Role;
       setRole(nextRole);
@@ -137,11 +165,15 @@ export default function ModeratorChatScreen() {
 
       setSlots(data);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Failed to load slots');
+      dialog.show({
+        title: 'Error',
+        message: e.message ?? 'Failed to load slots',
+        tone: 'error',
+      });
     } finally {
       setLoading(false);
     }
-  }, [selectedDay, selectedModeratorId]);
+  }, [dialog, selectedDay, selectedModeratorId]);
 
   useEffect(() => {
     load();
@@ -164,12 +196,18 @@ export default function ModeratorChatScreen() {
   const createDefaultDaySlots = async () => {
     try {
       if (isBeforeDay(selectedDay, today)) {
-        Alert.alert('Invalid day', 'You can only open slots from today onward.');
+        dialog.show({
+          title: 'Invalid day',
+          message: 'You can only open slots from today onward.',
+        });
         return;
       }
 
       if (isAfterDay(selectedDay, maxDay)) {
-        Alert.alert('Invalid day', 'You can only open slots up to 4 weeks ahead.');
+        dialog.show({
+          title: 'Invalid day',
+          message: 'You can only open slots up to 4 weeks ahead.',
+        });
         return;
       }
 
@@ -181,40 +219,80 @@ export default function ModeratorChatScreen() {
         CANADA_TIMEZONE
       );
       await load();
+      toast.show('Day slots created', 'success');
     } catch (e: any) {
-      Alert.alert('Unable to create slots', e.message ?? 'Please try again');
+      dialog.show({
+        title: 'Unable to create slots',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearPastOpenSlots = async () => {
+    try {
+      setSaving(true);
+      const deleted = await moderatorCalendarService.clearPastOpenSlots();
+      await load();
+      toast.show(
+        deleted > 0
+          ? `Cleared ${deleted} past open slot${deleted === 1 ? '' : 's'}`
+          : 'No past open slots to clear',
+        'success'
+      );
+    } catch (e: any) {
+      dialog.show({
+        title: 'Unable to clear past open slots',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
     } finally {
       setSaving(false);
     }
   };
 
   const bookSlot = async (slot: ModeratorSlot) => {
-  try {
-    const displayStatus = getModeratorSlotDisplayStatus(slot);
+    try {
+      const displayStatus = getModeratorSlotDisplayStatus(slot);
 
-    if (displayStatus === 'EXPIRED') {
-      Alert.alert('Slot expired', 'This slot is no longer available.');
-      return;
+      if (displayStatus === 'EXPIRED') {
+        dialog.show({
+          title: 'Slot expired',
+          message: 'This slot is no longer available.',
+        });
+        return;
+      }
+
+      setSaving(true);
+
+      if (rescheduleFromSlotId) {
+        await moderatorCalendarService.reschedule(rescheduleFromSlotId, slot.id);
+        setRescheduleFromSlotId(null);
+        dialog.show({
+          title: 'Rescheduled',
+          message: 'Your appointment has been moved.',
+        });
+      } else {
+        await moderatorCalendarService.bookSlot(slot.id);
+        dialog.show({
+          title: 'Booked',
+          message: 'Your slot has been reserved.',
+        });
+      }
+
+      await load();
+    } catch (e: any) {
+      dialog.show({
+        title: 'Unable to save',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(true);
-
-    if (rescheduleFromSlotId) {
-      await moderatorCalendarService.reschedule(rescheduleFromSlotId, slot.id);
-      setRescheduleFromSlotId(null);
-      Alert.alert('Rescheduled', 'Your appointment has been moved.');
-    } else {
-      await moderatorCalendarService.bookSlot(slot.id);
-      Alert.alert('Booked', 'Your slot has been reserved.');
-    }
-
-    await load();
-  } catch (e: any) {
-    Alert.alert('Unable to save', e.message ?? 'Please try again');
-  } finally {
-    setSaving(false);
-  }
-};
+  };
 
   const cancelSlot = async (slotId: string) => {
     try {
@@ -222,9 +300,16 @@ export default function ModeratorChatScreen() {
       await moderatorCalendarService.cancelBooking(slotId, 'Cancelled from app');
       setRescheduleFromSlotId(null);
       await load();
-      Alert.alert('Cancelled', 'The booking has been cancelled.');
+      dialog.show({
+        title: 'Cancelled',
+        message: 'The booking has been cancelled.',
+      });
     } catch (e: any) {
-      Alert.alert('Unable to cancel', e.message ?? 'Please try again');
+      dialog.show({
+        title: 'Unable to cancel',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
     } finally {
       setSaving(false);
     }
@@ -235,11 +320,107 @@ export default function ModeratorChatScreen() {
       setSaving(true);
       await moderatorCalendarService.deleteSlot(slotId);
       await load();
-      Alert.alert('Deleted', 'The slot has been removed.');
+      dialog.show({
+        title: 'Deleted',
+        message: 'The slot has been removed.',
+      });
     } catch (e: any) {
-      Alert.alert('Unable to delete slot', e.message ?? 'Please try again');
+      dialog.show({
+        title: 'Unable to delete slot',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openWhatsApp = async (slot: ModeratorSlot) => {
+    try {
+      const phone = sanitizePhoneForWhatsApp(slot.booked_by_phone);
+      if (!phone) {
+        dialog.show({
+          title: 'No phone number',
+          message: 'This member does not have a valid phone number for WhatsApp.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      const message = buildModeratorReadyMessage(slot.booked_by_name, currentUserName);
+      const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.href = url;
+        return;
+      }
+
+      await Linking.openURL(url);
+    } catch (e: any) {
+      dialog.show({
+        title: 'Unable to open WhatsApp',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
+    }
+  };
+
+  const openVideoRoom = async (slot: ModeratorSlot) => {
+    try {
+      const url = slot.video_room_url?.trim();
+      if (!url) {
+        dialog.show({
+          title: 'No video link',
+          message: 'This booking does not have a video link yet.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.href = url;
+        return;
+      }
+
+      await Linking.openURL(url);
+    } catch (e: any) {
+      dialog.show({
+        title: 'Unable to open video room',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
+    }
+  };
+
+  const copyVideoLink = async (slot: ModeratorSlot) => {
+    try {
+      const url = slot.video_room_url?.trim();
+      if (!url) {
+        dialog.show({
+          title: 'No video link',
+          message: 'This booking does not have a video link yet.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      if (
+        Platform.OS === 'web' &&
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard?.writeText
+      ) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        await Clipboard.setStringAsync(url);
+      }
+
+      toast.show('Video link copied', 'success');
+    } catch (e: any) {
+      dialog.show({
+        title: 'Unable to copy video link',
+        message: e.message ?? 'Please try again',
+        tone: 'error',
+      });
     }
   };
 
@@ -262,16 +443,31 @@ export default function ModeratorChatScreen() {
               Canada, IST, and GMT times shown together
             </Text>
           </View>
+        </View>
 
-         {canCreateSlots ? (
-            <TouchableOpacity style={styles.createBtn} onPress={createDefaultDaySlots} disabled={saving}>
+        {canCreateSlots ? (
+          <View style={styles.createActionsRow}>
+            <TouchableOpacity
+              style={styles.createBtn}
+              onPress={createDefaultDaySlots}
+              disabled={saving}
+            >
               <Ionicons name="add-circle-outline" size={18} color="#111827" />
               <Text style={styles.createBtnText}>Add Day Slots</Text>
             </TouchableOpacity>
-          ) : null}
-        </View>
 
-       {(role === 'USER' || isAdmin) ? (
+            <TouchableOpacity
+              style={styles.clearPastBtn}
+              onPress={clearPastOpenSlots}
+              disabled={saving}
+            >
+              <Ionicons name="time-outline" size={18} color="#9A3412" />
+              <Text style={styles.clearPastBtnText}>Clear Past Open Slots</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {(role === 'USER' || isAdmin) ? (
           <View style={styles.moderatorSection}>
             <Text style={styles.sectionLabel}>Choose Moderator</Text>
             <ScrollView
@@ -318,7 +514,11 @@ export default function ModeratorChatScreen() {
             style={[styles.dayArrow, !canGoPrev && styles.dayArrowDisabled]}
             disabled={!canGoPrev}
           >
-            <Ionicons name="chevron-back" size={18} color={canGoPrev ? '#111827' : '#9CA3AF'} />
+            <Ionicons
+              name="chevron-back"
+              size={18}
+              color={canGoPrev ? '#111827' : '#9CA3AF'}
+            />
           </TouchableOpacity>
 
           <View style={styles.dayTextWrap}>
@@ -331,13 +531,19 @@ export default function ModeratorChatScreen() {
             style={[styles.dayArrow, !canGoNext && styles.dayArrowDisabled]}
             disabled={!canGoNext}
           >
-            <Ionicons name="chevron-forward" size={18} color={canGoNext ? '#111827' : '#9CA3AF'} />
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={canGoNext ? '#111827' : '#9CA3AF'}
+            />
           </TouchableOpacity>
         </View>
 
         {rescheduleFromSlotId ? (
           <View style={styles.banner}>
-            <Text style={styles.bannerText}>Pick a new open slot to complete your reschedule.</Text>
+            <Text style={styles.bannerText}>
+              Pick a new open slot to complete your reschedule.
+            </Text>
             <TouchableOpacity onPress={() => setRescheduleFromSlotId(null)}>
               <Text style={styles.bannerLink}>Clear</Text>
             </TouchableOpacity>
@@ -370,10 +576,14 @@ export default function ModeratorChatScreen() {
                     isModerator={isModerator}
                     isAdmin={isAdmin}
                     isMine={isMine}
+                    moderatorName={currentUserName}
                     onBook={() => bookSlot(slot)}
                     onCancel={() => cancelSlot(slot.id)}
                     onReschedule={() => setRescheduleFromSlotId(slot.id)}
                     onDelete={() => deleteSlot(slot.id)}
+                    onWhatsApp={openWhatsApp}
+                    onJoinVideo={openVideoRoom}
+                    onCopyVideoLink={copyVideoLink}
                   />
                 );
               })
@@ -394,6 +604,7 @@ export default function ModeratorChatScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#FAFAFA' },
   container: { flex: 1, padding: 16 },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -406,6 +617,13 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '800', color: '#111827' },
   subtitle: { fontSize: 13, color: '#6B7280', marginTop: 4 },
+
+  createActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
   createBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -418,6 +636,22 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   createBtnText: { fontWeight: '700', color: '#111827' },
+
+  clearPastBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFF7ED',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  clearPastBtnText: {
+    fontWeight: '700',
+    color: '#9A3412',
+  },
 
   moderatorSection: {
     marginBottom: 14,

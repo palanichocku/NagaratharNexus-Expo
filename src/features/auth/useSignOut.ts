@@ -1,11 +1,12 @@
 // src/features/auth/useSignOut.ts
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Platform } from 'react-native';
+import { useRouter, type Href } from 'expo-router';
 import { supabase } from '@/src/lib/supabase';
+import { useDialog } from '@/src/ui/feedback/useDialog';
 
 type UseSignOutOptions = {
-  redirectTo?: string; // default "/login"
+  redirectTo?: Href; // default "/login"
   onBeforeSignOut?: () => void | Promise<void>;
   showErrorAlert?: boolean; // default true
   timeoutMs?: number; // default 4000
@@ -22,6 +23,7 @@ export function useSignOut(options: UseSignOutOptions = {}) {
   } = options;
 
   const router = useRouter();
+  const dialog = useDialog();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const inFlightRef = useRef(false);
 
@@ -32,7 +34,9 @@ export function useSignOut(options: UseSignOutOptions = {}) {
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
-        window.location.replace(redirectTo);
+        window.location.replace(
+          typeof redirectTo === 'string' ? redirectTo : String(redirectTo)
+        );
       } catch {}
     }
   }, [router, redirectTo]);
@@ -46,12 +50,10 @@ export function useSignOut(options: UseSignOutOptions = {}) {
     try {
       if (onBeforeSignOut) await onBeforeSignOut();
 
-      // ✅ Clear any magic-link tokens / query params on web
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      // ✅ Don’t hang forever
       await Promise.race([
         supabase.auth.signOut(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Sign out timed out')), timeoutMs)),
@@ -63,9 +65,11 @@ export function useSignOut(options: UseSignOutOptions = {}) {
       const msg = e?.message || 'Please try again.';
 
       if (showErrorAlert) {
-        Platform.OS === 'web'
-          ? alert(`Sign out failed: ${msg}`)
-          : Alert.alert('Sign out failed', msg);
+        dialog.show({
+          title: 'Sign out failed',
+          message: msg,
+          tone: 'error',
+        });
       }
 
       if (forceNavigateOnError) hardNavigate();
@@ -73,7 +77,7 @@ export function useSignOut(options: UseSignOutOptions = {}) {
       inFlightRef.current = false;
       setIsSigningOut(false);
     }
-  }, [hardNavigate, isSigningOut, onBeforeSignOut, showErrorAlert, timeoutMs, forceNavigateOnError]);
+  }, [dialog, hardNavigate, isSigningOut, onBeforeSignOut, showErrorAlert, timeoutMs, forceNavigateOnError]);
 
   return { signOut, isSigningOut };
 }

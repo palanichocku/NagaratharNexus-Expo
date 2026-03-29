@@ -12,7 +12,6 @@ import {
   Image,
   useWindowDimensions,
   Modal,
-  Alert,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +25,7 @@ import type { ThinProfileCard } from '../../../src/services/search.service';
 import { useAppTheme } from '../../../src/theme/ThemeProvider';
 import { useFavoritesController } from '../../../src/features/favorites/useFavoritesController';
 import { ProfileThinTile } from '../../../src/components/ProfileThinTile';
+import { useDialog } from '@/src/ui/feedback/useDialog';
 
 export default function FavoritesScreen() {
   const navigation = useNavigation();
@@ -33,6 +33,7 @@ export default function FavoritesScreen() {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const isWeb = Platform.OS === 'web';
   const { width: windowW } = useWindowDimensions();
+  const dialog = useDialog();
 
   const fav = useFavoritesController();
 
@@ -90,15 +91,15 @@ export default function FavoritesScreen() {
   );
 
   // Match SearchExperience spacing rules
-const gutter = isWeb ? 24 : 16;
-const contentPadding = gutter;
+  const gutter = isWeb ? 24 : 16;
+  const contentPadding = gutter;
 
-const usableW = Math.max(320, windowW - (isWeb ? 340 : 0));
-const maxListW = isWeb ? 980 : 620; // give favorites same premium width feel
-const listW = Math.min(maxListW, usableW - contentPadding * 2);
+  const usableW = Math.max(320, windowW - (isWeb ? 340 : 0));
+  const maxListW = isWeb ? 980 : 620; // give favorites same premium width feel
+  const listW = Math.min(maxListW, usableW - contentPadding * 2);
 
-// ✅ THIS is the important part: make the card narrower than listW
-const cardW = Math.max(300, Math.min(listW, isWeb ? listW - 40 : listW - 12));
+  // ✅ THIS is the important part: make the card narrower than listW
+  const cardW = Math.max(300, Math.min(listW, isWeb ? listW - 40 : listW - 12));
 
   const keyExtractor = useCallback((item: ThinProfileCard) => String(item.id), []);
 
@@ -112,12 +113,16 @@ const cardW = Math.max(300, Math.min(listW, isWeb ? listW - 40 : listW - 12));
       try {
         await favoriteService.removeFavorite(profileId);
       } catch (e) {
-        Alert.alert('Could not remove favorite', 'Please try again.');
+        dialog.show({
+          title: 'Could not remove favorite',
+          message: 'Please try again.',
+          tone: 'error',
+        });
         // optional: refresh to re-sync
         refreshFavorites();
       }
     },
-    [removeFromLocal, refreshFavorites],
+    [removeFromLocal, refreshFavorites, dialog],
   );
 
   const renderItem = useCallback(
@@ -130,7 +135,7 @@ const cardW = Math.max(300, Math.min(listW, isWeb ? listW - 40 : listW - 12));
         isFavorited
         favBusy={false}
         onToggleFavorite={() => void handleUnfavorite(String(item.id))}
-        />
+      />
     ),
     [handleUnfavorite, listW, openByIndex, theme],
   );

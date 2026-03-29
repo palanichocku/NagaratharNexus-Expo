@@ -10,10 +10,10 @@ import {
   FlatList,
   Image,
   useWindowDimensions,
-  Modal,
-  Alert,
+  Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useDialog } from '@/src/ui/feedback/useDialog';
 
 import { useAppTheme } from '../../theme/ThemeProvider';
 import FilterPanel from '../../../app/(tabs)/search/FilterPanel';
@@ -54,6 +54,7 @@ export default function SearchExperience({
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const isWeb = Platform.OS === 'web';
   const { width: windowW } = useWindowDimensions();
+  const dialog = useDialog();
 
   const enabled = gateEnabled ? gateState === 'ACTIVE' : true;
 
@@ -136,11 +137,19 @@ export default function SearchExperience({
         }
 
         if (!res.ok && res.reason === 'LIMIT_REACHED') {
-          Alert.alert('Favorites limit reached', `You can save up to ${res.limit} favorites.`);
+          dialog.show({
+            title: 'Favorites limit reached',
+            message: `You can save up to ${res.limit} favorites.`,
+            tone: 'warning',
+          });
           return;
         }
 
-        Alert.alert('Could not save favorite', res.message || 'Please try again.');
+        dialog.show({
+        title: 'Could not save favorite',
+        message: res.message || 'Please try again.',
+        tone: 'error',
+      });
       } finally {
         setFavBusy((p) => ({ ...p, [profileId]: false }));
       }

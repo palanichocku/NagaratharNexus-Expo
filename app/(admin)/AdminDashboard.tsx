@@ -7,7 +7,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Platform,
-  Alert,
   ActivityIndicator,
   Modal,
   TextInput,
@@ -42,6 +41,9 @@ import {
 } from '@/src/utils/timezone';
 import { useDialog } from '@/src/ui/feedback/useDialog';
 import { useToast } from '@/src/ui/feedback/useToast';
+import { Linking } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+
 
 const FS: any = FileSystem;
 const PAGE_SIZE = 20;
@@ -227,19 +229,15 @@ const canGoCalendarNext = useMemo(
     } catch (e) {
       console.error('Failed to load success stories:', e);
       setStories([]);
-      if (isWeb) {
-        alert('Unable to load success stories');
-      } else {
-        dialog.show({
-          title: 'Error',
-          message: 'Failed to load success stories',
-          tone: 'error',
-        });
-      }
+      dialog.show({
+        title: 'Error',
+        message: 'Failed to load success stories',
+        tone: 'error',
+      });
     } finally {
       setStoriesLoading(false);
     }
-  }, [dialog, isWeb]);
+  }, [dialog]);
 
   const openCreateStory = useCallback(async () => {
     setEditingStoryId(null);
@@ -263,6 +261,104 @@ const canGoCalendarNext = useMemo(
     });
   }, []);
 
+  const sanitizePhoneForWhatsApp = (phone?: string | null) => {
+  if (!phone) return '';
+  return phone.replace(/[^\d]/g, '');
+};
+
+const buildModeratorReadyMessage = (memberName?: string | null, moderatorName?: string | null) => {
+  const safeMemberName = memberName?.trim() || 'Member';
+  const safeModeratorName = moderatorName?.trim() || 'the moderator';
+
+  return `Hello ${safeMemberName}, this is ${safeModeratorName} from Nagarathar Nexus. I’m ready for our scheduled meeting now. Please reply here when you are ready to begin.`;
+};
+
+const openWhatsApp = async (slot: ModeratorSlot) => {
+  try {
+    const phone = sanitizePhoneForWhatsApp(slot.booked_by_phone);
+    if (!phone) {
+      dialog.show({
+        title: 'No phone number',
+        message: 'This member does not have a valid phone number for WhatsApp.',
+        tone: 'error',
+      });
+      return;
+    }
+
+    const moderatorName = selectedCalendarModerator?.full_name ?? 'the moderator';
+    const message = buildModeratorReadyMessage(slot.booked_by_name, moderatorName);
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.href = url;
+      return;
+    }
+
+    await Linking.openURL(url);
+  } catch (e: any) {
+    dialog.show({
+      title: 'Unable to open WhatsApp',
+      message: e?.message ?? 'Please try again.',
+      tone: 'error',
+    });
+  }
+};
+
+const openVideoRoom = async (slot: ModeratorSlot) => {
+  try {
+    const url = slot.video_room_url?.trim();
+    if (!url) {
+      dialog.show({
+        title: 'No video link',
+        message: 'This booking does not have a video link yet.',
+        tone: 'error',
+      });
+      return;
+    }
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.href = url;
+      return;
+    }
+
+    await Linking.openURL(url);
+  } catch (e: any) {
+    dialog.show({
+      title: 'Unable to open video room',
+      message: e?.message ?? 'Please try again.',
+      tone: 'error',
+    });
+  }
+};
+
+const copyVideoLink = async (slot: ModeratorSlot) => {
+  try {
+    const url = slot.video_room_url?.trim();
+    if (!url) {
+      dialog.show({
+        title: 'No video link',
+        message: 'This booking does not have a video link yet.',
+        tone: 'error',
+      });
+      return;
+    }
+
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      await Clipboard.setStringAsync(url);
+    }
+
+    toast.show('Video link copied', 'success');
+  } catch (e: any) {
+    dialog.show({
+      title: 'Unable to copy video link',
+      message: e?.message ?? 'Please try again.',
+      tone: 'error',
+    });
+  }
+};
+
   const resetStoryForm = useCallback(() => {
     setEditingStoryId(null);
     setStoryForm(EMPTY_STORY_FORM);
@@ -270,12 +366,20 @@ const canGoCalendarNext = useMemo(
 
   const handleSaveStory = useCallback(async () => {
     if (!storyForm.title.trim()) {
-      isWeb ? alert('Title is required') : Alert.alert('Missing data', 'Title is required');
+      dialog.show({
+        title: 'Missing data',
+        message: 'Title is required',
+        tone: 'error',
+      });
       return;
     }
 
     if (!storyForm.wedding_date.trim()) {
-      isWeb ? alert('Wedding date is required') : Alert.alert('Missing data', 'Wedding date is required');
+      dialog.show({
+        title: 'Missing data',
+        message: 'Wedding date is required',
+        tone: 'error',
+      });
       return;
     }
 
@@ -295,7 +399,7 @@ const canGoCalendarNext = useMemo(
 
       await loadStories();
       resetStoryForm();
-      isWeb ? alert('Success story saved') : Alert.alert('Saved', 'Success story saved');
+      toast.show('Success story saved', 'success');
 
       let savedStory: any;
 
@@ -307,108 +411,133 @@ const canGoCalendarNext = useMemo(
 
       await loadStories();
 
-    if (savedStory?.id) {
-      startEditStory(savedStory);
-    }
+      if (savedStory?.id) {
+        startEditStory(savedStory);
+      }
 
-    isWeb ? alert('Success story saved') : Alert.alert('Saved', 'Success story saved');
-
+      toast.show('Success story saved', 'success');
     } catch (e: any) {
       console.error('Save story failed:', e);
       const msg = e?.message ?? 'Unable to save success story';
-      isWeb ? alert(msg) : Alert.alert('Error', msg);
+      dialog.show({
+        title: 'Error',
+        message: msg,
+        tone: 'error',
+      });
     } finally {
       setStoriesSaving(false);
     }
-  }, [storyForm, editingStoryId, loadStories, resetStoryForm, isWeb]);
-
+  }, [storyForm, editingStoryId, loadStories, resetStoryForm, dialog, toast, startEditStory]);
 
   const handleUploadStoryPhoto = useCallback(async () => {
-  if (!editingStoryId) {
-    if (isWeb) alert('Please create the story first, then upload a photo.');
-    else Alert.alert('Create story first', 'Please create the story first, then upload a photo.');
-    return;
-  }
-
-  try {
-    let file: File | null = null;
-
-    if (Platform.OS === 'web') {
-      file = await new Promise<File | null>((resolve) => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.onchange = () => {
-          const selected = input.files?.[0] ?? null;
-          resolve(selected);
-        };
-        input.click();
+    if (!editingStoryId) {
+      dialog.show({
+        title: 'Create story first',
+        message: 'Please create the story first, then upload a photo.',
+        tone: 'warning',
       });
-    } else {
-      Alert.alert('Not supported yet', 'Photo upload is currently wired for web first.');
       return;
     }
 
-    if (!file) return;
+    try {
+      let file: File | null = null;
 
-    const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-    const fileName = `photo.${fileExt}`;
-    const filePath = `${editingStoryId}/${fileName}`;
+      if (Platform.OS === 'web') {
+        file = await new Promise<File | null>((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.onchange = () => {
+            const selected = input.files?.[0] ?? null;
+            resolve(selected);
+          };
+          input.click();
+        });
+      } else {
+        dialog.show({
+          title: 'Not supported yet',
+          message: 'Photo upload is currently wired for web first.',
+          tone: 'info',
+        });
+        return;
+      }
 
-    const { error: uploadError } = await supabase.storage
-      .from('success-stories')
-      .upload(filePath, file, {
-        upsert: true,
-        contentType: file.type || 'image/jpeg',
+      if (!file) return;
+
+      const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+      const fileName = `photo.${fileExt}`;
+      const filePath = `${editingStoryId}/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('success-stories')
+        .upload(filePath, file, {
+          upsert: true,
+          contentType: file.type || 'image/jpeg',
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from('success-stories')
+        .getPublicUrl(filePath);
+
+      const photoUrl = publicUrlData?.publicUrl ?? null;
+
+      await adminService.updateSuccessStory(editingStoryId, {
+        photo_url: photoUrl,
+        photo_path: filePath,
       });
 
-    if (uploadError) throw uploadError;
+      setStoryForm((prev) => ({
+        ...prev,
+        photo_url: photoUrl ?? '',
+        photo_path: filePath,
+      }));
 
-    const { data: publicUrlData } = supabase.storage
-      .from('success-stories')
-      .getPublicUrl(filePath);
+      await loadStories();
 
-    const photoUrl = publicUrlData?.publicUrl ?? null;
-
-    await adminService.updateSuccessStory(editingStoryId, {
-      photo_url: photoUrl,
-      photo_path: filePath,
-    });
-
-    setStoryForm((prev) => ({
-      ...prev,
-      photo_url: photoUrl ?? '',
-      photo_path: filePath,
-    }));
-
-    await loadStories();
-
-    
-    if (isWeb) alert('Photo uploaded successfully.');
-    else Alert.alert('Uploaded', 'Photo uploaded successfully.');
-  } catch (e: any) {
-    console.error('Story photo upload failed FULL:', JSON.stringify(e, null, 2));
-    console.error('Story photo upload failed RAW:', e);
-    const msg = e?.message ?? 'Unable to upload photo';
-    if (isWeb) alert(msg);
-    else Alert.alert('Error', msg);
-  }
-}, [editingStoryId, isWeb, loadStories]);
+      toast.show('Photo uploaded successfully.', 'success');
+    } catch (e: any) {
+      console.error('Story photo upload failed FULL:', JSON.stringify(e, null, 2));
+      console.error('Story photo upload failed RAW:', e);
+      const msg = e?.message ?? 'Unable to upload photo';
+      dialog.show({
+        title: 'Error',
+        message: msg,
+        tone: 'error',
+      });
+    }
+  }, [editingStoryId, loadStories, dialog, toast]);
 
   const handleDeleteStory = useCallback(async (id: string) => {
-    const ok = isWeb ? window.confirm('Delete this success story?') : true;
-    if (!ok) return;
-
-    try {
-      await adminService.deleteSuccessStory(id);
-      await loadStories();
-      if (editingStoryId === id) resetStoryForm();
-      isWeb ? alert('Deleted') : Alert.alert('Deleted', 'Success story removed');
-    } catch (e: any) {
-      const msg = e?.message ?? 'Unable to delete success story';
-      isWeb ? alert(msg) : Alert.alert('Error', msg);
-    }
-  }, [editingStoryId, isWeb, loadStories, resetStoryForm]);
+    dialog.show({
+      title: 'Delete this success story?',
+      message: 'This story will be permanently removed.',
+      tone: 'warning',
+      actions: [
+        { label: 'Cancel', variant: 'secondary' },
+        {
+          label: 'Delete',
+          variant: 'danger',
+          onPress: async () => {
+            try {
+              await adminService.deleteSuccessStory(id);
+              await loadStories();
+              if (editingStoryId === id) resetStoryForm();
+              toast.show('Success story removed', 'success');
+            } catch (e: any) {
+              const msg = e?.message ?? 'Unable to delete success story';
+              dialog.show({
+                title: 'Error',
+                message: msg,
+                tone: 'error',
+              });
+            }
+          },
+        },
+      ],
+    });
+  }, [editingStoryId, loadStories, resetStoryForm, dialog, toast]);
 
   const endTimeOptions = useMemo(
     () => TIME_OPTIONS.filter((t) => t > slotStartTime),
@@ -636,6 +765,46 @@ const canGoCalendarNext = useMemo(
   dialog,
 ]);
 
+const handleClearPastOpenSlots = useCallback(async () => {
+  dialog.show({
+    title: 'Clear past open slots?',
+    message: 'This will permanently remove only past open slots for you. Booked slots will remain.',
+    tone: 'warning',
+    actions: [
+      { label: 'Cancel', variant: 'secondary' },
+      {
+        label: 'Clear Past Slots',
+        variant: 'danger',
+        onPress: async () => {
+          try {
+            setCalendarSaving(true);
+
+            const count = await moderatorCalendarService.clearPastOpenSlots();
+
+            await loadCalendar();
+
+            toast.show(
+              count > 0
+                ? `Removed ${count} past open slot${count === 1 ? '' : 's'}.`
+                : 'No past open slots to clear.',
+              'success'
+            );
+          } catch (e: any) {
+            dialog.show({
+              title: 'Unable to clear past open slots',
+              message: e?.message ?? 'Please try again.',
+              tone: 'error',
+            });
+          } finally {
+            setCalendarSaving(false);
+          }
+        },
+      },
+    ],
+  });
+}, [dialog, loadCalendar, toast]);
+
+
   const handleDeleteCalendarSlot = useCallback(
     (slotId: string) => {
       dialog.show({
@@ -698,6 +867,7 @@ const canGoCalendarNext = useMemo(
     [loadCalendar, rescheduleFromSlotId, dialog, toast]
   );
 
+  
   const handleCancelCalendarSlot = useCallback(
     async (slotId: string) => {
       try {
@@ -734,7 +904,7 @@ const canGoCalendarNext = useMemo(
 const renderModeratorCalendar = () => (
   <View style={styles.calendarPage}>
     <View style={styles.calendarHeader}>
-      <View>
+      <View style={styles.calendarHeaderCopy}>
         <Text style={styles.settingsTitle}>
           {isCalendarAdmin ? 'Moderator Calendars' : 'Moderator Calendar'}
         </Text>
@@ -826,7 +996,7 @@ const renderModeratorCalendar = () => (
           Add half-hour slots for the selected day in Toronto time.
         </Text>
 
-        <View style={styles.slotComposerRow}>
+        <View style={styles.slotComposerGrid}>
           <View style={styles.slotTimeField}>
             <Text style={styles.slotTimeLabel}>Start</Text>
             <TouchableOpacity
@@ -848,7 +1018,9 @@ const renderModeratorCalendar = () => (
               <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
             </TouchableOpacity>
           </View>
+        </View>
 
+        <View style={styles.slotComposerActions}>
           <TouchableOpacity
             style={styles.calendarCreateBtn}
             onPress={createSlotsForSelectedWindow}
@@ -858,52 +1030,63 @@ const renderModeratorCalendar = () => (
             <Text style={styles.calendarCreateBtnText}>Add Slots</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.calendarDangerBtn}
-            onPress={() => {
-              dialog.show({
-                title: 'Clear open slots?',
-                message: `This will remove all unbooked slots for ${calendarDayLabel}. Booked slots will remain.`,
-                tone: 'warning',
-                actions: [
-                  { label: 'Cancel', variant: 'secondary' },
-                  {
-                    label: 'Clear Slots',
-                    variant: 'danger',
-                    onPress: async () => {
-                      try {
-                        setCalendarSaving(true);
+          <View style={styles.calendarDangerStack}>
+            <TouchableOpacity
+              style={styles.calendarDangerBtn}
+              onPress={() => {
+                dialog.show({
+                  title: 'Clear open slots?',
+                  message: `This will remove all unbooked slots for ${calendarDayLabel}. Booked slots will remain.`,
+                  tone: 'warning',
+                  actions: [
+                    { label: 'Cancel', variant: 'secondary' },
+                    {
+                      label: 'Clear Slots',
+                      variant: 'danger',
+                      onPress: async () => {
+                        try {
+                          setCalendarSaving(true);
 
-                        const count = await moderatorCalendarService.clearOpenSlotsForDay(
-                          calendarDayLabel,
-                          CANADA_TIMEZONE
-                        );
+                          const count = await moderatorCalendarService.clearOpenSlotsForDay(
+                            calendarDayLabel,
+                            CANADA_TIMEZONE
+                          );
 
-                        await loadCalendar();
+                          await loadCalendar();
 
-                        toast.show(
-                          `Removed ${count} open slot${count === 1 ? '' : 's'}.`,
-                          'success'
-                        );
-                      } catch (e: any) {
-                        dialog.show({
-                          title: 'Unable to clear slots',
-                          message: e?.message ?? 'Please try again.',
-                          tone: 'error',
-                        });
-                      } finally {
-                        setCalendarSaving(false);
-                      }
+                          toast.show(
+                            `Removed ${count} open slot${count === 1 ? '' : 's'}.`,
+                            'success'
+                          );
+                        } catch (e: any) {
+                          dialog.show({
+                            title: 'Unable to clear slots',
+                            message: e?.message ?? 'Please try again.',
+                            tone: 'error',
+                          });
+                        } finally {
+                          setCalendarSaving(false);
+                        }
+                      },
                     },
-                  },
-                ],
-              });
-            }}
-            disabled={calendarSaving}
-          >
-            <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
-            <Text style={styles.calendarDangerBtnText}>Clear Open Slots</Text>
-          </TouchableOpacity>
+                  ],
+                });
+              }}
+              disabled={calendarSaving}
+            >
+              <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
+              <Text style={styles.calendarDangerBtnText}>Clear Open Slots</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.calendarWarnBtn}
+              onPress={handleClearPastOpenSlots}
+              disabled={calendarSaving}
+            >
+              <Ionicons name="time-outline" size={18} color="#9A3412" />
+              <Text style={styles.calendarWarnBtnText}>Clear Past Open Slots</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     ) : isCalendarAdmin ? (
@@ -955,6 +1138,9 @@ const renderModeratorCalendar = () => (
                 onDelete={
                   isCalendarModerator ? () => handleDeleteCalendarSlot(slot.id) : undefined
                 }
+                onWhatsApp={openWhatsApp}
+                onJoinVideo={openVideoRoom}
+                onCopyVideoLink={copyVideoLink}
               />
             );
           })
@@ -1031,13 +1217,16 @@ const renderModeratorCalendar = () => (
       setActiveModal(null);
     } catch (e: any) {
       toast.show('Success: Test data removed', 'success');
-      if (isWeb) alert('Error: ' + e.message);
-      else Alert.alert('Error', e.message);
+      dialog.show({
+        title: 'Error',
+        message: e.message,
+        tone: 'error',
+      });
     } finally {
       setIsProcessing(false);
       setProcessProgress(0);
     }
-  }, [isWeb, loadData]);
+  }, [loadData, toast, dialog]);
 
   const ThemePicker = () => (
     <View style={styles.themePickerCard}>
@@ -1072,7 +1261,13 @@ const renderModeratorCalendar = () => (
         context={{ role: isSysAdmin ? 'ADMIN' : 'MODERATOR' }}
         gateEnabled={false}
         autoSearchOnMount={true}
-        onReport={() => Alert.alert('Admin', 'Use utilities to revoke.')}
+        onReport={() =>
+          dialog.show({
+            title: 'Admin',
+            message: 'Use utilities to revoke.',
+            tone: 'info',
+          })
+        }
       />
     );
   };
@@ -1144,7 +1339,7 @@ const renderModeratorCalendar = () => (
           <Text style={styles.subtitle}>Welcome back, {adminName}</Text>
         </View>
         <TouchableOpacity onPress={() => loadData(false)} style={styles.refreshBtn}>
-          <Ionicons name="refresh" size={20} color={theme.colors.primary} style={{ transformOrigin: 'center' } as any} />
+          <Ionicons name="refresh" size={20} color={theme.colors.primary} />
         </TouchableOpacity>
         <SignOutButton
           variant="header"
@@ -1177,7 +1372,7 @@ const renderModeratorCalendar = () => (
                     style={styles.itemRow}
                   >
                     <Text style={{ fontWeight: '600', color: theme.colors.text }}>{item.full_name}</Text>
-                    <Ionicons name="chevron-forward" size={18} color={theme.colors.mutedText} style={{ transformOrigin: 'center' } as any} />
+                    <Ionicons name="chevron-forward" size={18} color={theme.colors.mutedText} />
                   </TouchableOpacity>
                 ))
               )}
@@ -1239,7 +1434,7 @@ const renderModeratorCalendar = () => (
   if (initError) {
     return (
       <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle" size={48} color={theme.colors.danger} style={{ transformOrigin: 'center' } as any} />
+        <Ionicons name="alert-circle" size={48} color={theme.colors.danger} />
         <Text style={styles.errorText}>{initError}</Text>
         <TouchableOpacity style={styles.retryBtn} onPress={() => (isWeb ? window.location.reload() : loadData())}>
           <Text style={styles.retryText}>RETRY CONNECTION</Text>
@@ -1261,18 +1456,14 @@ const renderModeratorCalendar = () => (
     const result = await adminService.testAuditLogInsert();
 
     if (result?.success) {
-      if (isWeb) {
-        alert('Audit log test passed. Row inserted successfully.');
-      } else {
-        Alert.alert('Success', 'Audit log test passed. Row inserted successfully.');
-      }
+      toast.show('Audit log test passed. Row inserted successfully.', 'success');
     } else {
       const message = result?.error || 'Audit log test failed. Check console.';
-      if (isWeb) {
-        alert(message);
-      } else {
-        Alert.alert('Audit Test Failed', message);
-      }
+      dialog.show({
+        title: 'Audit Test Failed',
+        message,
+        tone: 'error',
+      });
     }
   };
 
@@ -1570,7 +1761,11 @@ const renderModeratorCalendar = () => (
               style={styles.applyBtn}
               onPress={async () => {
                 if (!modForm.email || !modForm.fullName) {
-                  alert('Data incomplete');
+                  dialog.show({
+                    title: 'Data incomplete',
+                    message: 'Please enter both full name and email.',
+                    tone: 'error',
+                  });
                   return;
                 }
                 await adminService.setupModerator(modForm);
@@ -1626,7 +1821,11 @@ const renderModeratorCalendar = () => (
                       await loadData(true);
                       setActiveModal(null);
                     } catch (e: any) {
-                      alert(e.message);
+                      dialog.show({
+                        title: 'Error',
+                        message: e.message,
+                        tone: 'error',
+                      });
                     } finally {
                       setIsProcessing(false);
                       setProcessProgress(0);
@@ -1639,14 +1838,15 @@ const renderModeratorCalendar = () => (
                 <TouchableOpacity
                   style={[styles.applyBtn, { backgroundColor: theme.colors.danger, marginTop: 10 }]}
                   onPress={() => {
-                    if (isWeb) {
-                      if (window.confirm('Purge test profiles?')) handleDeleteTestUsers();
-                    } else {
-                      Alert.alert('Purge', 'Delete all test profiles?', [
-                        { text: 'Cancel' },
-                        { text: 'Purge', onPress: handleDeleteTestUsers },
-                      ]);
-                    }
+                    dialog.show({
+                      title: 'Purge test profiles?',
+                      message: 'Delete all test profiles?',
+                      tone: 'warning',
+                      actions: [
+                        { label: 'Cancel', variant: 'secondary' },
+                        { label: 'Purge', variant: 'danger', onPress: handleDeleteTestUsers },
+                      ],
+                    });
                   }}
                 >
                   <Text style={styles.applyText}>Wipe Test Data</Text>
@@ -1752,7 +1952,6 @@ const SidebarIcon = ({ icon, label, active, onPress, styles, theme }: any) => (
       name={icon}
       size={24}
       color={active ? (theme?.colors?.text ?? '#11181C') : (theme?.colors?.mutedText ?? '#6B7280')}
-      style={{ transformOrigin: 'center' } as any}
     />
     <Text style={[styles.sidebarLabel, active && styles.sidebarLabelActive]}>{label}</Text>
   </TouchableOpacity>
@@ -1764,7 +1963,7 @@ const StatCard = ({ label, value, icon, color, styles }: any) => {
 
   return (
     <View style={styles.statCard}>
-      <Ionicons name={icon} size={24} color={color} style={{ transformOrigin: 'center' } as any} />
+      <Ionicons name={icon} size={24} color={color}  />
       <View style={{ marginLeft: 15 }}>
         <Text style={styles.statValue}>{displayValue}</Text>
         <Text style={styles.statLabel}>{label}</Text>
@@ -1775,7 +1974,7 @@ const StatCard = ({ label, value, icon, color, styles }: any) => {
 
 const UtilityBtn = ({ label, icon, color, onPress, styles }: any) => (
   <TouchableOpacity style={styles.utilBtn} onPress={onPress}>
-    <Ionicons name={icon} size={18} color={color} style={{ transformOrigin: 'center' } as any} />
+    <Ionicons name={icon} size={18} color={color} />
     <Text style={styles.utilLabel}>{label}</Text>
   </TouchableOpacity>
 );
@@ -1784,7 +1983,7 @@ const ModalHeader = ({ title, onClose, styles }: any) => (
   <View style={styles.modalHeader}>
     <Text style={{ fontWeight: '800', fontSize: 16, color: '#111827' }}>{title}</Text>
     <TouchableOpacity onPress={onClose}>
-      <Ionicons name="close" size={28} color="#111827" style={{ transformOrigin: 'center' } as any} />
+      <Ionicons name="close" size={28} color="#111827" />
     </TouchableOpacity>
   </View>
 );
@@ -1991,60 +2190,6 @@ function makeStyles(theme: any) {
       fontWeight: '900',
       letterSpacing: 0.3,
     },
-
-    calendarPage: {
-      flex: 1,
-      padding: 32,
-      backgroundColor: bg,
-    },
-    calendarHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 18,
-      gap: 16,
-    },
-    calendarSubtitle: {
-      marginTop: 6,
-      fontSize: 13,
-      fontWeight: '700',
-      color: muted,
-    },
-    calendarCreateBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      backgroundColor: surface,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: border,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-    },
-    calendarCreateBtnText: {
-      fontWeight: '800',
-      color: text,
-      fontSize: 13,
-    },
-    calendarDayBar: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      alignItems: 'center',
-      gap: 14,
-      marginBottom: 16,
-    },
-    calendarDayArrow: {
-      backgroundColor: surface,
-      borderWidth: 1,
-      borderColor: border,
-      borderRadius: 999,
-      padding: 8,
-    },
-    calendarDayText: {
-      fontSize: 16,
-      fontWeight: '800',
-      color: text,
-    },
     calendarBanner: {
       marginBottom: 14,
       borderRadius: 14,
@@ -2066,91 +2211,15 @@ function makeStyles(theme: any) {
       color: '#92400E',
       fontWeight: '900',
     },
-    calendarListContent: {
-      paddingBottom: 40,
-    },
-    calendarEmptyCard: {
-      backgroundColor: surface,
-      borderRadius: 20,
-      borderWidth: 1,
-      borderColor: border,
-      padding: 20,
-    },
-    calendarEmptyTitle: {
-      fontSize: 18,
-      fontWeight: '800',
-      color: text,
-    },
-    calendarEmptySub: {
-      marginTop: 8,
-      color: muted,
-      lineHeight: 20,
-      fontWeight: '600',
-    },
-    calendarSavingOverlay: {
-      position: 'absolute',
-      right: 24,
-      bottom: 24,
-      backgroundColor: surface2,
-      borderWidth: 1,
-      borderColor: border,
-      borderRadius: 999,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-    },
-    slotComposerCard: {
-      backgroundColor: surface,
-      borderRadius: 20,
-      borderWidth: 1,
-      borderColor: border,
-      padding: 18,
-      marginBottom: 18,
-    },
-    slotComposerTitle: {
-      fontSize: 15,
-      fontWeight: '900',
-      color: text,
-    },
-    slotComposerSub: {
-      marginTop: 4,
-      fontSize: 12,
-      fontWeight: '700',
-      color: muted,
-    },
     slotComposerRow: {
       flexDirection: Platform.OS === 'web' ? 'row' : 'column',
       gap: 12,
       marginTop: 14,
       alignItems: Platform.OS === 'web' ? 'flex-end' : 'stretch',
     },
-    slotTimeField: {
-      minWidth: 140,
-    },
-    slotTimeLabel: {
-      fontSize: 12,
-      fontWeight: '800',
-      color: muted,
-      marginBottom: 6,
-    },
     dangerBtnText: {
       color: '#BE123C',
       fontWeight: '700',
-    },
-    calendarDangerBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      backgroundColor: surface,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: danger,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-    },
-    calendarDangerBtnText: {
-      fontWeight: '800',
-      color: danger,
-      fontSize: 13,
     },
     timePickerModal: {
       backgroundColor: surface,
@@ -2190,36 +2259,275 @@ function makeStyles(theme: any) {
     timePickerItemTextActive: {
       color: surface2,
     },
-    slotTimeInput: {
-      backgroundColor: bg,
-      borderWidth: 1,
-      borderColor: border,
-      borderRadius: 12,
-      paddingHorizontal: 12,
-      paddingVertical: 12,
-      minHeight: 48,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    slotTimeInputText: {
-      fontSize: 14,
-      fontWeight: '800',
-      color: text,
-    },
-    calendarModeratorSection: {
+calendarPage: {
+  flex: 1,
+  padding: Platform.OS === 'web' ? 32 : 18,
+  backgroundColor: bg,
+},
+
+calendarHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  marginBottom: 18,
+  gap: 16,
+  flexWrap: 'wrap',
+},
+
+calendarHeaderCopy: {
+  flexShrink: 1,
+  minWidth: 0,
+},
+
+calendarSubtitle: {
+  marginTop: 6,
+  fontSize: 13,
+  fontWeight: '700',
+  color: muted,
+},
+
+calendarDayBar: {
+  flexDirection: 'row',
+  justifyContent: 'center',
+  alignItems: 'center',
+  gap: 14,
+  marginBottom: 16,
+},
+
+calendarDayArrow: {
+  backgroundColor: surface,
+  borderWidth: 1,
+  borderColor: border,
+  borderRadius: 999,
+  padding: 8,
+},
+
+calendarDayArrowDisabled: {
+  opacity: 0.5,
+},
+
+calendarDayTextWrap: {
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: 0,
+  flexShrink: 1,
+  paddingHorizontal: 6,
+},
+
+calendarDayText: {
+  fontSize: 16,
+  fontWeight: '800',
+  color: text,
+  textAlign: 'center',
+},
+
+calendarDayHint: {
+  marginTop: 4,
+  fontSize: 12,
+  color: muted,
+  fontWeight: '700',
+  textAlign: 'center',
+},
+
+calendarListContent: {
+  paddingBottom: 40,
+},
+
+calendarEmptyCard: {
+  backgroundColor: surface,
+  borderRadius: 20,
+  borderWidth: 1,
+  borderColor: border,
+  padding: 20,
+},
+
+calendarEmptyTitle: {
+  fontSize: 18,
+  fontWeight: '800',
+  color: text,
+},
+
+calendarEmptySub: {
+  marginTop: 8,
+  color: muted,
+  lineHeight: 20,
+  fontWeight: '600',
+},
+
+calendarSavingOverlay: {
+  position: 'absolute',
+  right: 24,
+  bottom: 24,
+  backgroundColor: surface2,
+  borderWidth: 1,
+  borderColor: border,
+  borderRadius: 999,
+  paddingHorizontal: 14,
+  paddingVertical: 10,
+},
+
+slotComposerCard: {
+  backgroundColor: surface,
+  borderRadius: 20,
+  borderWidth: 1,
+  borderColor: border,
+  padding: 18,
+  marginBottom: 18,
+},
+
+slotComposerTitle: {
+  fontSize: 15,
+  fontWeight: '900',
+  color: text,
+},
+
+slotComposerSub: {
+  marginTop: 4,
+  fontSize: 12,
+  fontWeight: '700',
+  color: muted,
+},
+
+slotComposerGrid: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: 12,
+  marginTop: 14,
+},
+
+slotTimeField: {
+  flexGrow: 1,
+  flexShrink: 1,
+  flexBasis: 220,
+  minWidth: 160,
+},
+
+slotTimeLabel: {
+  fontSize: 12,
+  fontWeight: '800',
+  color: muted,
+  marginBottom: 6,
+},
+
+slotTimeInput: {
+  backgroundColor: bg,
+  borderWidth: 1,
+  borderColor: border,
+  borderRadius: 12,
+  paddingHorizontal: 12,
+  paddingVertical: 12,
+  minHeight: 48,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  width: '100%',
+},
+
+slotTimeInputText: {
+  fontSize: 14,
+  fontWeight: '800',
+  color: text,
+},
+
+slotComposerActions: {
+  marginTop: 14,
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: 12,
+  alignItems: 'flex-start',
+},
+
+calendarCreateBtn: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  backgroundColor: surface,
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: border,
+  paddingHorizontal: 14,
+  paddingVertical: 10,
+  minHeight: 48,
+  minWidth: 150,
+  flexShrink: 1,
+},
+
+calendarCreateBtnText: {
+  fontWeight: '800',
+  color: text,
+  fontSize: 13,
+  textAlign: 'center',
+},
+
+calendarDangerStack: {
+  flexDirection: 'column',
+  gap: 10,
+  flexGrow: 1,
+  flexShrink: 1,
+  minWidth: 220,
+},
+
+calendarDangerBtn: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  backgroundColor: surface,
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: danger,
+  paddingHorizontal: 14,
+  paddingVertical: 10,
+  minHeight: 48,
+  width: '100%',
+},
+
+calendarDangerBtnText: {
+  fontWeight: '800',
+  color: danger,
+  fontSize: 13,
+  textAlign: 'center',
+},
+
+calendarWarnBtn: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  backgroundColor: surface,
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: '#FDBA74',
+  paddingHorizontal: 14,
+  paddingVertical: 10,
+  minHeight: 48,
+  width: '100%',
+},
+
+calendarWarnBtnText: {
+  fontWeight: '800',
+  color: '#9A3412',
+  fontSize: 13,
+  textAlign: 'center',
+},
+
+calendarModeratorSection: {
   marginBottom: 14,
 },
+
 calendarModeratorLabel: {
   fontSize: 13,
   fontWeight: '800',
   color: text,
   marginBottom: 8,
 },
+
 calendarModeratorPillRow: {
   gap: 8,
   paddingRight: 10,
 },
+
 calendarModeratorPill: {
   backgroundColor: surface2,
   borderWidth: 1,
@@ -2228,35 +2536,28 @@ calendarModeratorPill: {
   paddingHorizontal: 14,
   paddingVertical: 10,
 },
+
 calendarModeratorPillActive: {
   backgroundColor: primary,
   borderColor: primary,
 },
+
 calendarModeratorPillText: {
   color: text,
   fontWeight: '700',
 },
+
 calendarModeratorPillTextActive: {
   color: surface2,
 },
+
 calendarModeratorHelper: {
   marginTop: 8,
   color: muted,
   fontSize: 13,
   fontWeight: '600',
 },
-calendarDayArrowDisabled: {
-  opacity: 0.5,
-},
-calendarDayTextWrap: {
-  alignItems: 'center',
-},
-calendarDayHint: {
-  marginTop: 4,
-  fontSize: 12,
-  color: muted,
-  fontWeight: '700',
-},
+
 calendarReadOnlyCard: {
   backgroundColor: surface,
   borderRadius: 20,
@@ -2265,11 +2566,13 @@ calendarReadOnlyCard: {
   padding: 18,
   marginBottom: 18,
 },
+
 calendarReadOnlyTitle: {
   fontSize: 15,
   fontWeight: '900',
   color: text,
 },
+
 calendarReadOnlySub: {
   marginTop: 6,
   fontSize: 12,

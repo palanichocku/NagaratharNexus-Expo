@@ -17,6 +17,34 @@ const PAGE_SIZE = 20;
 
 type ThemeStatusStyle = { bg: string; text: string; border: string };
 
+function formatDateOnly(value?: string | null) {
+  if (!value) return '—';
+
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatDaysAgo(value?: string | null) {
+  if (!value) return '';
+
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (days <= 0) return 'today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
 export default function UserManagementScreen() {
   const { theme } = useAppTheme();
 
@@ -45,6 +73,7 @@ export default function UserManagementScreen() {
       if (query) profRequest = profRequest.or(`full_name.ilike.%${query}%,email.ilike.%${query}%`);
 
       const { data: profs, count, error: profError } = await profRequest
+        .order('last_login_at', { ascending: true, nullsFirst: true })
         .order('created_at', { ascending: false })
         .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
 
@@ -95,16 +124,23 @@ export default function UserManagementScreen() {
   const renderRow = ({ item, index }: any) => {
     const approved = Boolean(item.is_approved);
     const status = getStatusStyle(approved);
+    const lastLoginDate = formatDateOnly(item.last_login_at);
+    const lastLoginAgo = formatDaysAgo(item.last_login_at);
 
     return (
       <View style={[styles.tableRow, index % 2 === 0 && styles.tableRowAlt]}>
-        <View style={{ flex: 2 }}>
+        <View style={{ flex: 1.8 }}>
           <Text style={styles.nameText}>{item.full_name || '—'}</Text>
           <Text style={styles.subText}>ID: {String(item.id).substring(0, 8)}...</Text>
         </View>
 
-        <Text style={[styles.cellText, { flex: 1.5 }]}>{item.phone || '—'}</Text>
+        <Text style={[styles.cellText, { flex: 1.3 }]}>{item.phone || '—'}</Text>
         <Text style={[styles.cellText, { flex: 2 }]}>{item.email || 'N/A'}</Text>
+
+        <View style={{ flex: 1.6 }}>
+          <Text style={styles.cellText}>{lastLoginDate}</Text>
+          <Text style={styles.subText}>{lastLoginAgo || '—'}</Text>
+        </View>
 
         <View style={{ flex: 1, alignItems: 'center' }}>
           <View style={[styles.statusPill, { backgroundColor: status.bg, borderColor: status.border }]}>
@@ -130,7 +166,7 @@ export default function UserManagementScreen() {
       <View style={styles.topBar}>
         <View style={{ flex: 1 }}>
           <Text style={styles.screenTitle}>User Directory</Text>
-          <Text style={styles.screenSubtitle}>Search and manage roles</Text>
+          <Text style={styles.screenSubtitle}>Sorted by oldest login first</Text>
         </View>
 
         <View style={styles.countChip}>
@@ -167,9 +203,10 @@ export default function UserManagementScreen() {
             renderItem={renderRow}
             ListHeaderComponent={
               <View style={styles.tableHeader}>
-                <Text style={[styles.columnHeader, { flex: 2 }]}>Name</Text>
-                <Text style={[styles.columnHeader, { flex: 1.5 }]}>Phone</Text>
+                <Text style={[styles.columnHeader, { flex: 1.8 }]}>Name</Text>
+                <Text style={[styles.columnHeader, { flex: 1.3 }]}>Phone</Text>
                 <Text style={[styles.columnHeader, { flex: 2 }]}>Email</Text>
+                <Text style={[styles.columnHeader, { flex: 1.6 }]}>Last Login Date</Text>
                 <Text style={[styles.columnHeader, { flex: 1, textAlign: 'center' }]}>Status</Text>
                 <Text style={[styles.columnHeader, { flex: 1, textAlign: 'right' }]}>Role</Text>
               </View>

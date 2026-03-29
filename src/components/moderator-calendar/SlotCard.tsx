@@ -11,10 +11,14 @@ type Props = {
   isModerator: boolean;
   isAdmin?: boolean;
   isMine: boolean;
+  moderatorName?: string;
   onBook?: () => void;
   onCancel?: () => void;
   onReschedule?: () => void;
   onDelete?: () => void;
+  onWhatsApp?: (slot: ModeratorSlot) => void;
+  onJoinVideo?: (slot: ModeratorSlot) => void;
+  onCopyVideoLink?: (slot: ModeratorSlot) => void;
 };
 
 export default function SlotCard({
@@ -22,10 +26,14 @@ export default function SlotCard({
   isModerator,
   isAdmin = false,
   isMine,
+  moderatorName,
   onBook,
   onCancel,
   onReschedule,
   onDelete,
+  onWhatsApp,
+  onJoinVideo,
+  onCopyVideoLink,
 }: Props) {
   const labels = useMemo(
     () => slotLabelTriple(slot.slot_start_utc, slot.slot_end_utc),
@@ -45,6 +53,19 @@ export default function SlotCard({
       : displayStatus === 'EXPIRED'
       ? styles.expired
       : styles.blocked;
+
+  const showBookedDetails =
+    (isModerator || isAdmin) && displayStatus === 'BOOKED';
+
+  const showWhatsAppAction =
+    (isModerator || isAdmin) &&
+    displayStatus === 'BOOKED' &&
+    !!slot.booked_by_phone;
+
+  const showVideoActions =
+    displayStatus === 'BOOKED' &&
+    !!slot.video_room_url &&
+    (isModerator || isAdmin || isMine);
 
   return (
     <View style={styles.card}>
@@ -90,8 +111,10 @@ export default function SlotCard({
             </TouchableOpacity>
           </>
         ) : null}
+      </View>
 
-        {(isModerator || isAdmin) && displayStatus === 'BOOKED' && (
+      {showBookedDetails ? (
+        <>
           <View style={styles.bookerPillRow}>
             <View style={styles.infoPill}>
               <Text style={styles.infoPillText}>Name: {slot.booked_by_name || '—'}</Text>
@@ -104,9 +127,68 @@ export default function SlotCard({
             <View style={styles.infoPill}>
               <Text style={styles.infoPillText}>Phone: {slot.booked_by_phone || '—'}</Text>
             </View>
+
+            {moderatorName ? (
+              <View style={styles.infoPill}>
+                <Text style={styles.infoPillText}>Moderator: {moderatorName}</Text>
+              </View>
+            ) : null}
           </View>
-        )}
-      </View>
+
+          {(showWhatsAppAction || showVideoActions) ? (
+            <View style={styles.contactActionsRow}>
+              {showWhatsAppAction ? (
+                <TouchableOpacity
+                  style={styles.contactBtn}
+                  onPress={() => onWhatsApp?.(slot)}
+                >
+                  <Text style={styles.contactBtnText}>WhatsApp</Text>
+                </TouchableOpacity>
+              ) : null}
+
+              {showVideoActions ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.contactBtn}
+                    onPress={() => onJoinVideo?.(slot)}
+                  >
+                    <Text style={styles.contactBtnText}>
+                      {isModerator || isAdmin ? 'Start Video' : 'Join Video'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.contactBtn}
+                    onPress={() => onCopyVideoLink?.(slot)}
+                  >
+                    <Text style={styles.contactBtnText}>Copy Video Link</Text>
+                  </TouchableOpacity>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+        </>
+      ) : null}
+
+      {!showBookedDetails && showVideoActions ? (
+        <View style={styles.contactActionsRow}>
+          <TouchableOpacity
+            style={styles.contactBtn}
+            onPress={() => onJoinVideo?.(slot)}
+          >
+            <Text style={styles.contactBtnText}>
+              {isModerator || isAdmin ? 'Start Video' : 'Join Video'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.contactBtn}
+            onPress={() => onCopyVideoLink?.(slot)}
+          >
+            <Text style={styles.contactBtnText}>Copy Video Link</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -230,5 +312,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     flexShrink: 1,
+  },
+  contactActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  contactBtn: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  contactBtnText: {
+    color: '#166534',
+    fontWeight: '800',
+    fontSize: 13,
   },
 });

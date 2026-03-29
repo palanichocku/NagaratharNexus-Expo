@@ -5,19 +5,19 @@ usage() {
   cat <<'EOF'
 Usage:
   reset one user:
-    ENV_FILE=./ops/.env.admin.local ./scripts/reset-test-password.sh \
+    ENV_FILE=./ops/.env.admin.dev ./scripts/reset-test-password.sh \
       --email member1@nexus.com \
       --password 'XYZ123' \
       --confirm-email
 
   reset all matching users by domain:
-    ENV_FILE=./ops/.env.admin.local ./scripts/reset-test-password.sh \
+    ENV_FILE=./ops/.env.admin.dev ./scripts/reset-test-password.sh \
       --all \
       --domain nexus.com \
       --password 'XYZ123'
 
   reset all users flagged as test accounts in profiles:
-    ENV_FILE=./ops/.env.admin.local ./scripts/reset-test-password.sh \
+    ENV_FILE=./ops/.env.admin.dev ./scripts/reset-test-password.sh \
       --all-test-profiles \
       --password 'XYZ123'
 

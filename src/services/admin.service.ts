@@ -1,5 +1,5 @@
 // ./src/services/admin.service.ts
-import { supabase } from '../lib/supabase';
+import { supabase, REDIRECT_URL } from '../lib/supabase';
 import * as AppData from '../constants/appData';
 import { Alert, Platform } from 'react-native';
 import { AUDIT_SETTINGS } from '../constants/auditConfig';
@@ -873,13 +873,19 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
 
   async setupModerator(details: { fullName: string, email: string, role: string }) {
     try {
+      const redirectBase =
+        Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
+          ? window.location.origin
+          : REDIRECT_URL;
+
       const { error: inviteError } = await supabase.auth.signInWithOtp({
         email: details.email,
         options: {
           data: { full_name: details.fullName, role: details.role.toUpperCase() },
-          emailRedirectTo: 'http://localhost:8081/SetPassword',
+          emailRedirectTo: `${redirectBase}/SetPassword`,
         },
       });
+
       if (inviteError) throw inviteError;
       const msg = "Invite Sent! The staff member will be fully active once they click the link and set their password.";
       Platform.OS === 'web' ? alert(msg) : Alert.alert("Success", msg);

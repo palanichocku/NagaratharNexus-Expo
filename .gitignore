@@ -53,3 +53,5 @@ yarn-error.*
 .vscode/
 *.pem
 .vercel
+repomix-output.xml
+repomix-output.txt

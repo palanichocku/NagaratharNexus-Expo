@@ -1,45 +1,72 @@
-// src/lib/supabase.ts
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants'; // Import Expo Constants
 
-// These variables are injected from your .env file
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+// Access the dynamic extra field from app.config.js
+const extra = Constants.expoConfig?.extra || {};
+
+// Priority: Expo Constants (app.config.js) -> process.env -> fallback
+// Sanitize function to strip any non-visible characters/whitespace
+const sanitize = (str: string) => str.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+const supabaseUrl = sanitize(extra.supabaseUrl || '');
+const supabaseAnonKey = sanitize(extra.supabaseAnonKey || '');
+const nativeRedirectUrl = extra.nativeRedirectUrl || '';
+const appEnv = (extra.appEnv || 'dev').toLowerCase();
+
+// Partitioned storage key to prevent session hijacking between Dev/Prod
+const STORAGE_KEY = `nn-auth-v2-${appEnv}`;
+
+console.log('[SUPABASE MANIFEST CONFIG]', {
+  appEnv,
+  supabaseUrl,
+  storageKey: STORAGE_KEY
+});
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('⚠️ Supabase credentials missing! Check your .env file.');
+  console.warn('⚠️ Supabase credentials missing! Check your environment file.');
+}
+
+function resolveRedirectUrl() {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.location?.origin) {
+      return window.location.origin;
+    }
+    return '';
+  }
+  return nativeRedirectUrl;
 }
 
 const fetchWithTimeout: typeof fetch = (input, init) => {
-  // 🚀 INCREASE TIMEOUT: 12s is very short for image uploads on mobile/web
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000); // 60 seconds is safer
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
-  return fetch(input, { ...(init || {}), signal: controller.signal })
-    .finally(() => clearTimeout(timeout));
+  return fetch(input, { ...(init || {}), signal: controller.signal }).finally(() =>
+    clearTimeout(timeout)
+  );
 };
 
-// 🚀 SSR-Safe Environment Detection
-// This prevents "window is not defined" during Expo pre-rendering
-export const REDIRECT_URL = Platform.OS === 'web' 
-  ? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8081') 
-  : 'exp://127.0.0.1:8081';
-
-// 🚀 SSR-SAFE STORAGE SELECTION
-// This prevents AsyncStorage from executing 'window' checks on the server
 const isWeb = Platform.OS === 'web';
 const storage = isWeb
-  ? typeof window !== 'undefined' 
-    ? AsyncStorage 
+  ? typeof window !== 'undefined'
+    ? AsyncStorage
     : {
         getItem: () => Promise.resolve(null),
         setItem: () => Promise.resolve(),
         removeItem: () => Promise.resolve(),
       }
   : AsyncStorage;
-  
+
+export const REDIRECT_URL = resolveRedirectUrl();
+
+console.log('[SUPABASE CONFIG]', {
+  appEnv,
+  supabaseUrl,
+  redirectUrl: REDIRECT_URL,
+  storageKey: STORAGE_KEY
+});
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     storage,
@@ -47,6 +74,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: true,
     flowType: 'pkce',
+    storageKey: STORAGE_KEY, // Isolated per environment
   },
   global: { fetch: fetchWithTimeout },
 });

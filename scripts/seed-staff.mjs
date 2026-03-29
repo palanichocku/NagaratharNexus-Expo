@@ -1,17 +1,19 @@
 // scripts/seed-staff.mjs
 // Usage:
-//   node scripts/seed-staff.mjs --email mod2@nexus.com --password 'World@2026' --name 'Seed Moderator2' --role MODERATOR
+//   node scripts/seed-staff.mjs --email mod2@nexus.com --password 'XYZ123' --name 'Seed Moderator2' --role MODERATOR
 // Run from Project Home:
 //  node scripts/seed-staff.mjs \
 //    --email mod2@nexus.com \
-//    --password 'World@2026' \
+//    --password 'XYZ123' \
 //    --name 'Seed Moderator2' \
 //    --role MODERATOR
 // Env required:
 //   SUPABASE_URL=...
 //   SUPABASE_SERVICE_ROLE_KEY=...
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.production' });
+//dotenv.config({ path: '.env.development' });
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;

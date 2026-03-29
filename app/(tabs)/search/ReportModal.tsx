@@ -1,9 +1,11 @@
 // ./app/(tabs)/search/ReportModal.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../src/lib/supabase';
 import { USER_FLAG_REASONS } from '../../../src/constants/appData';
+import { useDialog } from '@/src/ui/feedback/useDialog';
+import { useToastContext } from '@/src/ui/feedback/ToastProvider';
 
 interface ReportModalProps {
   visible: boolean;
@@ -15,6 +17,8 @@ export default function ReportModal({ visible, targetUserId, onClose }: ReportMo
   const [targetName, setTargetName] = useState('User');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const dialog = useDialog();
+  const toast = useToastContext();
 
   // 🔄 Fetch the target user's name when the modal opens
   useEffect(() => {
@@ -41,7 +45,7 @@ export default function ReportModal({ visible, targetUserId, onClose }: ReportMo
     setSubmitting(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
+      if (!user) throw new Error('Not authenticated');
 
       const { error } = await supabase
         .from('reports')
@@ -54,11 +58,15 @@ export default function ReportModal({ visible, targetUserId, onClose }: ReportMo
 
       if (error) throw error;
 
-      Alert.alert("Report Received", "Thank you. Our moderators will review this profile within 24 hours.");
+      toast.show('Thank you. Our moderators will review this profile within 24 hours.', 'success');
       onClose();
     } catch (error: any) {
-      console.error("Report failed:", error.message);
-      Alert.alert("Error", "We couldn't submit your report. Please try again later.");
+      console.error('Report failed:', error.message);
+      dialog.show({
+        title: 'Error',
+        message: "We couldn't submit your report. Please try again later.",
+        tone: 'error',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -87,10 +95,10 @@ export default function ReportModal({ visible, targetUserId, onClose }: ReportMo
           <FlatList
             data={USER_FLAG_REASONS}
             keyExtractor={(item) => item.id}
-            scrollEnabled={false} // List is short enough for the card
+            scrollEnabled={false}
             renderItem={({ item }) => (
-              <TouchableOpacity 
-                style={styles.reasonBtn} 
+              <TouchableOpacity
+                style={styles.reasonBtn}
                 onPress={() => handleConfirmReport(item.label)}
                 disabled={submitting}
               >
@@ -105,9 +113,9 @@ export default function ReportModal({ visible, targetUserId, onClose }: ReportMo
             )}
           />
 
-          <TouchableOpacity 
-            style={styles.cancelBtn} 
-            onPress={onClose} 
+          <TouchableOpacity
+            style={styles.cancelBtn}
+            onPress={onClose}
             disabled={submitting}
           >
             <Text style={styles.cancelText}>Cancel</Text>
@@ -119,43 +127,43 @@ export default function ReportModal({ visible, targetUserId, onClose }: ReportMo
 }
 
 const styles = StyleSheet.create({
-  overlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(0,0,0,0.4)', 
-    justifyContent: 'center', 
-    alignItems: 'center' 
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center'
   },
-  modalCard: { 
-    width: 380, 
-    backgroundColor: '#FFF', 
-    borderRadius: 24, 
-    padding: 24, 
-    shadowOpacity: 0.15, 
-    shadowRadius: 20, 
-    elevation: 10 
+  modalCard: {
+    width: 380,
+    backgroundColor: '#FFF',
+    borderRadius: 24,
+    padding: 24,
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10
   },
-  header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    marginBottom: 12 
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12
   },
   title: { fontSize: 20, fontWeight: '900', color: '#1C1C1E' },
   subtitle: { fontSize: 14, color: '#8E8E93', marginBottom: 20, lineHeight: 20 },
   targetHighlight: { fontWeight: '800', color: '#000' },
-  reasonBtn: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    paddingVertical: 14, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#F2F2F7' 
+  reasonBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F2F7'
   },
-  reasonText: { 
-    flex: 1, 
-    marginLeft: 12, 
-    fontSize: 15, 
-    fontWeight: '600', 
-    color: '#1C1C1E' 
+  reasonText: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1C1C1E'
   },
   cancelBtn: { marginTop: 15, alignItems: 'center', padding: 10 },
   cancelText: { color: '#8E8E93', fontWeight: '700', fontSize: 14 }

@@ -1,13 +1,15 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, Linking, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/lib/supabase';
 import { useRouter } from 'expo-router';
 import { useAppTheme } from '../../src/theme/ThemeProvider';
+import { useDialog } from '@/src/ui/feedback/useDialog';
 
 export default function PendingApprovalScreen() {
   const router = useRouter();
   const { theme } = useAppTheme();
+  const dialog = useDialog();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const handleSignOut = async () => {
@@ -18,7 +20,11 @@ export default function PendingApprovalScreen() {
       // ✅ Force UI to leave this screen immediately
       router.replace('/(auth)/login');
     } catch (e: any) {
-      Alert.alert('Sign out failed', e?.message || 'Please try again.');
+      dialog.show({
+        title: 'Sign out failed',
+        message: e?.message || 'Please try again.',
+        tone: 'error',
+      });
     }
   };
 
@@ -35,12 +41,20 @@ export default function PendingApprovalScreen() {
     try {
       const canOpen = await Linking.canOpenURL(url);
       if (!canOpen) {
-        Alert.alert('Contact Support', `Email not available on this device.\n\nPlease email: ${supportEmail}`);
+        dialog.show({
+          title: 'Contact Support',
+          message: `Email not available on this device.\n\nPlease email: ${supportEmail}`,
+          tone: 'info',
+        });
         return;
       }
       await Linking.openURL(url);
     } catch {
-      Alert.alert('Contact Support', `Please email: ${supportEmail}`);
+      dialog.show({
+        title: 'Contact Support',
+        message: `Please email: ${supportEmail}`,
+        tone: 'info',
+      });
     }
   };
 

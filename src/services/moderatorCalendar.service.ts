@@ -21,6 +21,11 @@ export type ModeratorSlot = {
   booked_by_name?: string | null;
   booked_by_email?: string | null;
   booked_by_phone?: string | null;
+
+  video_provider?: string | null;
+  video_room_name?: string | null;
+  video_room_url?: string | null;
+  video_created_at?: string | null;
 };
 
 export type ModeratorDirectoryItem = {
@@ -45,7 +50,6 @@ export function getModeratorSlotDisplayStatus(
 export const moderatorCalendarService = {
   async getActiveModerators() {
     const { data, error } = await supabase.rpc('get_active_moderators');
-
     if (error) throw error;
     return (data ?? []) as ModeratorDirectoryItem[];
   },
@@ -65,45 +69,20 @@ export const moderatorCalendarService = {
     return (data ?? []) as ModeratorSlot[];
   },
 
-  // new method
   async getMyModeratorSlotsForRange(startIso: string, endIso: string) {
     const { data: authData } = await supabase.auth.getUser();
     const authUser = authData.user;
     if (!authUser) throw new Error('Not signed in');
 
     const { data, error } = await supabase.rpc('get_moderator_slots_with_booking_details', {
+      p_moderator_user_id: authUser.id,
       p_start_utc: startIso,
       p_end_utc: endIso,
-      p_moderator_user_id: authUser.id,
     });
 
     if (error) throw error;
-    return (data ?? []) as Array<ModeratorSlot & {
-      booked_by_name?: string | null;
-      booked_by_email?: string | null;
-      booked_by_phone?: string | null;
-    }>;
+    return (data ?? []) as ModeratorSlot[];
   },
-
-   // old method
-  async getSlotsForRangeWithBookingDetails(startIso: string, endIso: string) {
-  const { data: authData } = await supabase.auth.getUser();
-  const authUser = authData.user;
-  if (!authUser) throw new Error('Not signed in');
-
-  const { data, error } = await supabase.rpc('get_moderator_slots_with_booking_details', {
-    p_start_utc: startIso,
-    p_end_utc: endIso,
-    p_moderator_user_id: authUser.id,
-  });
-
-  if (error) throw error;
-  return (data ?? []) as Array<ModeratorSlot & {
-    booked_by_name?: string | null;
-    booked_by_email?: string | null;
-    booked_by_phone?: string | null;
-  }>;
-},
 
   async getModeratorSlotsWithBookingDetails(
     moderatorUserId: string,
@@ -111,17 +90,22 @@ export const moderatorCalendarService = {
     endIso: string
   ) {
     const { data, error } = await supabase.rpc('get_moderator_slots_with_booking_details', {
+      p_moderator_user_id: moderatorUserId,
       p_start_utc: startIso,
       p_end_utc: endIso,
-      p_moderator_user_id: moderatorUserId,
     });
 
     if (error) throw error;
-    return (data ?? []) as Array<ModeratorSlot & {
-      booked_by_name?: string | null;
-      booked_by_email?: string | null;
-      booked_by_phone?: string | null;
-    }>;
+    return (data ?? []) as ModeratorSlot[];
+  },
+
+  async clearPastOpenSlots(moderatorUserId?: string) {
+    const { data, error } = await supabase.rpc('clear_past_open_moderator_slots', {
+      p_moderator_user_id: moderatorUserId ?? null,
+    });
+
+    if (error) throw error;
+    return data as number;
   },
 
   async createSlotsForDay(
