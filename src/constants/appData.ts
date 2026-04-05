@@ -11,10 +11,7 @@ export const DEBUG_CONFIG = {
 export const USER_FLAG_REASONS = [
   { id: 'photos', label: 'Inappropriate Photos', icon: 'image-outline' },
   { id: 'fake', label: 'Fake Profile', icon: 'person-remove-outline' },
-  { id: 'harassment', label: 'Harassment / Hate Speech', icon: 'hand-left-outline' },
-  { id: 'spam', label: 'Spam / Advertising', icon: 'mail-unread-outline' },
   { id: 'data', label: 'Inaccurate Biodata', icon: 'document-text-outline' },
-  { id: 'other', label: 'Other / System Test', icon: 'bug-outline' },
 ];
 export type FlagReason = typeof USER_FLAG_REASONS[number];
 

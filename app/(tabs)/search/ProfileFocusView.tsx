@@ -5,6 +5,7 @@ import {
   View,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   ScrollView,
   ActivityIndicator,
   Animated,
@@ -231,10 +232,30 @@ export default function ProfileFocusView({
             <ProfileDisplay profile={maskedProfile} />
           )}
 
-          <TouchableOpacity style={styles.reportRow} onPress={onReport} activeOpacity={0.85}>
-            <Ionicons name="flag-outline" size={16} color={theme.colors.danger} />
-            <Text style={styles.reportText}>Report Profile for Review</Text>
-          </TouchableOpacity>
+          <Pressable
+            onPress={() => {
+              console.log('Report pressed');
+              onReport?.();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Report profile for review"
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.reportButton,
+              pressed && styles.reportButtonPressed,
+            ]}
+          >
+            <View style={styles.reportIconWrap}>
+              <Ionicons name="flag-outline" size={16} color={theme.colors.danger} />
+            </View>
+
+            <View style={styles.reportTextWrap}>
+              <Text style={styles.reportTitle}>Report Profile</Text>
+              <Text style={styles.reportSubtitle}>Flag this profile for moderator review</Text>
+            </View>
+
+            <Ionicons name="chevron-forward" size={16} color={theme.colors.danger} />
+          </Pressable>
         </ScrollView>
       </View>
 
@@ -311,5 +332,58 @@ function makeStyles(theme: any) {
       marginLeft: 6,
       textDecorationLine: 'underline',
     },
+    reportButton: {
+      marginTop: 18,
+      marginHorizontal: 18,
+      marginBottom: 26,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: `${theme.colors.danger}22`,
+      backgroundColor: `${theme.colors.danger}10`,
+      flexDirection: 'row',
+      alignItems: 'center',
+
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: Platform.OS === 'web' ? 0 : 0.06,
+      shadowRadius: 16,
+      elevation: 2,
+    },
+
+    reportIconWrap: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: `${theme.colors.danger}18`,
+    },
+
+    reportTextWrap: {
+      flex: 1,
+      marginLeft: 12,
+      marginRight: 10,
+    },
+
+    reportTitle: {
+      color: theme.colors.danger,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+
+    reportSubtitle: {
+      marginTop: 2,
+      color: theme.colors.mutedText,
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 16,
+    },
+    reportButtonPressed: {
+      opacity: 0.92,
+      transform: [{ scale: 0.995 }],
+    },
+    
   });
 }

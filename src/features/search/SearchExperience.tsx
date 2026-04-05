@@ -26,6 +26,7 @@ import type { ThinProfileCard } from '../../services/search.service';
 import { supabase } from '../../lib/supabase';
 import { favoriteService } from '../../services/favorite.service';
 import { ProfileThinTile } from '../../components/ProfileThinTile';
+import ReportModal from '../../../app/(tabs)/search/ReportModal';
 
 type GateState = 'LOADING' | 'ACTIVE' | 'PENDING' | 'NEW' | 'REJECTED';
 
@@ -70,6 +71,7 @@ export default function SearchExperience({
   // ✅ favorites map for current page
   const [favSet, setFavSet] = useState<Set<string>>(new Set());
   const [favBusy, setFavBusy] = useState<Record<string, boolean>>({});
+  const [isReportModalVisible, setReportModalVisible] = useState(false);
 
   // Refresh favorite state when cards change (batched)
   useEffect(() => {
@@ -317,15 +319,27 @@ export default function SearchExperience({
           </View>
 
           {c.selectedProfile ? (
-            <ProfileFocusView
-              profile={{ id: c.selectedProfile.id }}
-              onPrev={() => {}}
-              onNext={() => {}}
-              onReport={onReport ?? (() => {})}
-              showNav={false}
-              canPrev={false}
-              canNext={false}
-            />
+            <>
+              <ProfileFocusView
+                profile={{ id: c.selectedProfile.id }}
+                onPrev={() => {}}
+                onNext={() => {}}
+                onReport={() => {
+                  console.log('setting report modal visible');
+                  setReportModalVisible(true);
+                  onReport?.();
+                }}
+                showNav={false}
+                canPrev={false}
+                canNext={false}
+              />
+
+              <ReportModal
+                visible={isReportModalVisible}
+                targetUserId={String(c.selectedProfile?.id ?? '')}
+                onClose={() => setReportModalVisible(false)}
+              />
+            </>
           ) : null}
         </View>
       </Modal>
