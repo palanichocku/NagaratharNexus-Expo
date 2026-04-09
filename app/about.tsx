@@ -79,24 +79,13 @@ export default function AboutScreen() {
             <Text style={styles.profileName}>Palaniappan Chockalingam</Text>
 
             <Text style={styles.body}>
-              Palaniappan Chockalingam is the Founder and Platform Architect of 
-              Nagarathar Nexus, a modern matrimonial platform built exclusively for the
-              Nagarathar community.
+              Palaniappan Chockalingam is the Founder and Platform Architect of Nagarathar Nexus — a modern 
+              matrimonial platform built exclusively for the Nagarathar community. Inspired by Mrs. Valli Vellayan's 
+              dedicated WhatsApp service, he created a scalable, lasting solution where profiles stay accessible and 
+              searchable anytime. Free to all Nagarathars, the platform welcomes community feedback, collaboration, 
+              and voluntary donations to keep it thriving.
             </Text>
 
-            <Text style={styles.body}>
-              Inspired by the dedicated matrimonial service of Mrs. Valli Vellayan
-              through WhatsApp, he recognised the need for a more scalable and
-              enduring solution — one where profiles remain accessible, searchable,
-              and valuable to members at any time.
-            </Text>
-
-            <Text style={styles.bodyLast}>
-              Nagarathar Nexus was created to deliver exactly that: a trusted,
-              community-focused platform that brings together thoughtful design,
-              efficient search, and long-term value for Nagarathar families and
-              future generations.
-            </Text>
           </View>
         </View>
 

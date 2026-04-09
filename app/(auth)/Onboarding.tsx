@@ -1026,21 +1026,6 @@ export default function Onboarding() {
 
                     <View style={{ marginTop: 10 }}>
                       <SuggestionInput
-                        key={`${i}-${edu.level}`}
-                        value={edu.field || ''}
-                        placeholder="Type or choose a field of study"
-                        suggestions={fieldSuggestions}
-                        theme={theme}
-                        onChange={(v) => {
-                          const updated = [...formData.education_history];
-                          updated[i].field = v;
-                          setFormData((prev: any) => ({ ...prev, education_history: updated }));
-                        }}
-                      />
-                    </View>
-
-                    <View style={{ marginTop: 10 }}>
-                      <SuggestionInput
                         value={edu.field || ''}
                         placeholder="Type or choose a field of study"
                         suggestions={fieldSuggestions}
