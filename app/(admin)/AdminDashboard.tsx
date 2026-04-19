@@ -44,10 +44,14 @@ import { useToast } from '@/src/ui/feedback/useToast';
 import { Linking } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 
-
 const FS: any = FileSystem;
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 5;
 type AdminTab = 'ADMIN' | 'SEARCH' | 'CALENDAR' | 'SETTINGS';
+
+type PendingQueueCursor = {
+  created_at: string;
+  id: string;
+} | null;
 
 const TIME_OPTIONS = [
   '06:00', '06:30',
@@ -139,13 +143,20 @@ export default function AdminDashboard() {
   // --- DATA STATE ---
   const [stats, setStats] = useState({ totalUsers: 0, pendingApprovals: 0, activeConversations: 0 });
   const [queue, setQueue] = useState<any[]>([]);
+  const [queueCursor, setQueueCursor] = useState<PendingQueueCursor>(null);
+  const [queueHasMore, setQueueHasMore] = useState(false);
+  const [queueLoadingMore, setQueueLoadingMore] = useState(false);
+
   const [reports, setReports] = useState<any[]>([]);
+  const [deactivatedUsers, setDeactivatedUsers] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any>(null);
 
   const [announcement, setAnnouncement] = useState({ title: '', body: '' });
   const [modForm, setModForm] = useState({ fullName: '', phone: '', email: '', role: 'MODERATOR' });
   const [revokeForm, setRevokeForm] = useState({ fullName: '', phone: '', email: '', role: 'USER' });
+  const [revokeComment, setRevokeComment] = useState('');
+  const [reactivateForm, setReactivateForm] = useState({ id: '', email: '', fullName: '', note: '' });
 
   const [settings, setSettings] = useState({
     maintenanceMode: false,
@@ -159,67 +170,67 @@ export default function AdminDashboard() {
   });
 
   // --- CALENDAR STATE ---
-const MAX_DAYS_AHEAD = 28;
+  const MAX_DAYS_AHEAD = 28;
 
-function startOfDay(date: Date) {
-  const next = new Date(date);
-  next.setHours(0, 0, 0, 0);
-  return next;
-}
+  function startOfDay(date: Date) {
+    const next = new Date(date);
+    next.setHours(0, 0, 0, 0);
+    return next;
+  }
 
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
+  function addDays(date: Date, days: number) {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+  }
 
-function isBeforeDay(a: Date, b: Date) {
-  return startOfDay(a).getTime() < startOfDay(b).getTime();
-}
+  function isBeforeDay(a: Date, b: Date) {
+    return startOfDay(a).getTime() < startOfDay(b).getTime();
+  }
 
-function isAfterDay(a: Date, b: Date) {
-  return startOfDay(a).getTime() > startOfDay(b).getTime();
-}
+  function isAfterDay(a: Date, b: Date) {
+    return startOfDay(a).getTime() > startOfDay(b).getTime();
+  }
 
-const [calendarLoading, setCalendarLoading] = useState(false);
-const [calendarSaving, setCalendarSaving] = useState(false);
-const [calendarSlots, setCalendarSlots] = useState<ModeratorSlot[]>([]);
-const [calendarUserId, setCalendarUserId] = useState<string | null>(null);
-const [calendarDay, setCalendarDay] = useState(() => startOfDay(new Date()));
-const [rescheduleFromSlotId, setRescheduleFromSlotId] = useState<string | null>(null);
-const [slotStartTime, setSlotStartTime] = useState('09:00');
-const [slotEndTime, setSlotEndTime] = useState('17:00');
-const [timePickerMode, setTimePickerMode] = useState<'START' | 'END' | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarSaving, setCalendarSaving] = useState(false);
+  const [calendarSlots, setCalendarSlots] = useState<ModeratorSlot[]>([]);
+  const [calendarUserId, setCalendarUserId] = useState<string | null>(null);
+  const [calendarDay, setCalendarDay] = useState(() => startOfDay(new Date()));
+  const [rescheduleFromSlotId, setRescheduleFromSlotId] = useState<string | null>(null);
+  const [slotStartTime, setSlotStartTime] = useState('09:00');
+  const [slotEndTime, setSlotEndTime] = useState('17:00');
+  const [timePickerMode, setTimePickerMode] = useState<'START' | 'END' | null>(null);
 
-const [calendarModerators, setCalendarModerators] = useState<ModeratorDirectoryItem[]>([]);
-const [selectedCalendarModeratorId, setSelectedCalendarModeratorId] = useState<string | null>(null);
+  const [calendarModerators, setCalendarModerators] = useState<ModeratorDirectoryItem[]>([]);
+  const [selectedCalendarModeratorId, setSelectedCalendarModeratorId] = useState<string | null>(null);
 
-const isCalendarModerator = userRole === 'MODERATOR';
-const isCalendarAdmin = userRole === 'ADMIN';
-const canCreateCalendarSlots = isCalendarModerator;
+  const isCalendarModerator = userRole === 'MODERATOR';
+  const isCalendarAdmin = userRole === 'ADMIN';
+  const canCreateCalendarSlots = isCalendarModerator;
 
-const today = useMemo(() => startOfDay(new Date()), []);
-const maxCalendarDay = useMemo(() => startOfDay(addDays(new Date(), MAX_DAYS_AHEAD)), []);
+  const today = useMemo(() => startOfDay(new Date()), []);
+  const maxCalendarDay = useMemo(() => startOfDay(addDays(new Date(), MAX_DAYS_AHEAD)), []);
 
-const calendarDayLabel = useMemo(
-  () => toYMDInTimeZone(calendarDay, CANADA_TIMEZONE),
-  [calendarDay]
-);
+  const calendarDayLabel = useMemo(
+    () => toYMDInTimeZone(calendarDay, CANADA_TIMEZONE),
+    [calendarDay]
+  );
 
-const selectedCalendarModerator = useMemo(
-  () => calendarModerators.find((m) => m.id === selectedCalendarModeratorId) ?? null,
-  [calendarModerators, selectedCalendarModeratorId]
-);
+  const selectedCalendarModerator = useMemo(
+    () => calendarModerators.find((m) => m.id === selectedCalendarModeratorId) ?? null,
+    [calendarModerators, selectedCalendarModeratorId]
+  );
 
-const canGoCalendarPrev = useMemo(
-  () => !isBeforeDay(addDays(calendarDay, -1), today),
-  [calendarDay, today]
-);
+  const canGoCalendarPrev = useMemo(
+    () => !isBeforeDay(addDays(calendarDay, -1), today),
+    [calendarDay, today]
+  );
 
-const canGoCalendarNext = useMemo(
-  () => !isAfterDay(addDays(calendarDay, 1), maxCalendarDay),
-  [calendarDay, maxCalendarDay]
-);
+  const canGoCalendarNext = useMemo(
+    () => !isAfterDay(addDays(calendarDay, 1), maxCalendarDay),
+    [calendarDay, maxCalendarDay]
+  );
 
   const loadStories = useCallback(async () => {
     setStoriesLoading(true);
@@ -262,102 +273,102 @@ const canGoCalendarNext = useMemo(
   }, []);
 
   const sanitizePhoneForWhatsApp = (phone?: string | null) => {
-  if (!phone) return '';
-  return phone.replace(/[^\d]/g, '');
-};
+    if (!phone) return '';
+    return phone.replace(/[^\d]/g, '');
+  };
 
-const buildModeratorReadyMessage = (memberName?: string | null, moderatorName?: string | null) => {
-  const safeMemberName = memberName?.trim() || 'Member';
-  const safeModeratorName = moderatorName?.trim() || 'the moderator';
+  const buildModeratorReadyMessage = (memberName?: string | null, moderatorName?: string | null) => {
+    const safeMemberName = memberName?.trim() || 'Member';
+    const safeModeratorName = moderatorName?.trim() || 'the moderator';
 
-  return `Hello ${safeMemberName}, this is ${safeModeratorName} from Nagarathar Nexus. I’m ready for our scheduled meeting now. Please reply here when you are ready to begin.`;
-};
+    return `Hello ${safeMemberName}, this is ${safeModeratorName} from Nagarathar Nexus. I’m ready for our scheduled meeting now. Please reply here when you are ready to begin.`;
+  };
 
-const openWhatsApp = async (slot: ModeratorSlot) => {
-  try {
-    const phone = sanitizePhoneForWhatsApp(slot.booked_by_phone);
-    if (!phone) {
+  const openWhatsApp = async (slot: ModeratorSlot) => {
+    try {
+      const phone = sanitizePhoneForWhatsApp(slot.booked_by_phone);
+      if (!phone) {
+        dialog.show({
+          title: 'No phone number',
+          message: 'This member does not have a valid phone number for WhatsApp.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      const moderatorName = selectedCalendarModerator?.full_name ?? 'the moderator';
+      const message = buildModeratorReadyMessage(slot.booked_by_name, moderatorName);
+      const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.href = url;
+        return;
+      }
+
+      await Linking.openURL(url);
+    } catch (e: any) {
       dialog.show({
-        title: 'No phone number',
-        message: 'This member does not have a valid phone number for WhatsApp.',
+        title: 'Unable to open WhatsApp',
+        message: e?.message ?? 'Please try again.',
         tone: 'error',
       });
-      return;
     }
+  };
 
-    const moderatorName = selectedCalendarModerator?.full_name ?? 'the moderator';
-    const message = buildModeratorReadyMessage(slot.booked_by_name, moderatorName);
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  const openVideoRoom = async (slot: ModeratorSlot) => {
+    try {
+      const url = slot.video_room_url?.trim();
+      if (!url) {
+        dialog.show({
+          title: 'No video link',
+          message: 'This booking does not have a video link yet.',
+          tone: 'error',
+        });
+        return;
+      }
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.href = url;
-      return;
-    }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.href = url;
+        return;
+      }
 
-    await Linking.openURL(url);
-  } catch (e: any) {
-    dialog.show({
-      title: 'Unable to open WhatsApp',
-      message: e?.message ?? 'Please try again.',
-      tone: 'error',
-    });
-  }
-};
-
-const openVideoRoom = async (slot: ModeratorSlot) => {
-  try {
-    const url = slot.video_room_url?.trim();
-    if (!url) {
+      await Linking.openURL(url);
+    } catch (e: any) {
       dialog.show({
-        title: 'No video link',
-        message: 'This booking does not have a video link yet.',
+        title: 'Unable to open video room',
+        message: e?.message ?? 'Please try again.',
         tone: 'error',
       });
-      return;
     }
+  };
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.href = url;
-      return;
-    }
+  const copyVideoLink = async (slot: ModeratorSlot) => {
+    try {
+      const url = slot.video_room_url?.trim();
+      if (!url) {
+        dialog.show({
+          title: 'No video link',
+          message: 'This booking does not have a video link yet.',
+          tone: 'error',
+        });
+        return;
+      }
 
-    await Linking.openURL(url);
-  } catch (e: any) {
-    dialog.show({
-      title: 'Unable to open video room',
-      message: e?.message ?? 'Please try again.',
-      tone: 'error',
-    });
-  }
-};
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        await Clipboard.setStringAsync(url);
+      }
 
-const copyVideoLink = async (slot: ModeratorSlot) => {
-  try {
-    const url = slot.video_room_url?.trim();
-    if (!url) {
+      toast.show('Video link copied', 'success');
+    } catch (e: any) {
       dialog.show({
-        title: 'No video link',
-        message: 'This booking does not have a video link yet.',
+        title: 'Unable to copy video link',
+        message: e?.message ?? 'Please try again.',
         tone: 'error',
       });
-      return;
     }
-
-    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(url);
-    } else {
-      await Clipboard.setStringAsync(url);
-    }
-
-    toast.show('Video link copied', 'success');
-  } catch (e: any) {
-    dialog.show({
-      title: 'Unable to copy video link',
-      message: e?.message ?? 'Please try again.',
-      tone: 'error',
-    });
-  }
-};
+  };
 
   const resetStoryForm = useCallback(() => {
     setEditingStoryId(null);
@@ -579,15 +590,22 @@ const copyVideoLink = async (slot: ModeratorSlot) => {
   const loadData = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     try {
-      const [pending, safety, analytics, config] = await Promise.all([
-        adminService.getPendingProfiles(),
+      const [pendingPage, safety, analytics, config, inactiveMembers] = await Promise.all([
+        adminService.getPendingProfilesPage(PAGE_SIZE, null),
         adminService.getReports(),
         adminService.getAnalytics(),
         adminService.getSystemConfig(),
+        adminService.getDeactivatedUsers(),
       ]);
-      setQueue(pending || []);
+
+      setQueue(pendingPage?.items || []);
+      setQueueCursor(pendingPage?.nextCursor ?? null);
+      setQueueHasMore(!!pendingPage?.hasMore);
+
       setReports(safety || []);
+      setDeactivatedUsers(inactiveMembers || []);
       setStats(analytics || { totalUsers: 0, pendingApprovals: 0, activeConversations: 0 });
+
       if (config) setSettings((prev) => ({ ...prev, ...config }));
       setInitError(null);
     } catch (err: any) {
@@ -598,86 +616,170 @@ const copyVideoLink = async (slot: ModeratorSlot) => {
     }
   }, []);
 
-  const loadCalendar = useCallback(async () => {
-  setCalendarLoading(true);
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  const loadMoreQueue = useCallback(async () => {
+    if (!queueHasMore || !queueCursor || queueLoadingMore) return;
+    if (queue.length >= PAGE_SIZE) return;
 
-    if (!user) throw new Error('Not signed in');
+    const slotsRemaining = PAGE_SIZE - queue.length;
+    if (slotsRemaining <= 0) return;
 
-    setCalendarUserId(user.id);
-
-    const start = new Date(calendarDay);
-    start.setHours(0, 0, 0, 0);
-
-    const end = new Date(calendarDay);
-    end.setDate(end.getDate() + 1);
-    end.setHours(0, 0, 0, 0);
-
-    if (userRole === 'MODERATOR') {
-      const data = await moderatorCalendarService.getMyModeratorSlotsForRange(
-        start.toISOString(),
-        end.toISOString()
-      );
-      setCalendarSlots(data);
-      setSelectedCalendarModeratorId(user.id);
-      return;
+    setQueueLoadingMore(true);
+    try {
+      const nextPage = await adminService.getPendingProfilesPage(slotsRemaining, queueCursor);
+      setQueue((prev) => [...prev, ...(nextPage?.items || [])].slice(0, PAGE_SIZE));
+      setQueueCursor(nextPage?.nextCursor ?? null);
+      setQueueHasMore(!!nextPage?.hasMore);
+    } catch (err) {
+      console.error('Queue pagination failed:', err);
+      toast.show('Failed to load more pending approvals', 'error');
+    } finally {
+      setQueueLoadingMore(false);
     }
+  }, [queueHasMore, queueCursor, queueLoadingMore, queue.length, toast]);
 
-    if (userRole === 'ADMIN') {
-      const moderatorList = await moderatorCalendarService.getActiveModerators();
-      setCalendarModerators(moderatorList);
+  const removeReviewedUserFromQueue = useCallback((userId: string) => {
+    setQueue((prev) => prev.filter((item) => item.id !== userId));
+    setStats((prev) => ({
+      ...prev,
+      pendingApprovals: Math.max(0, Number(prev.pendingApprovals || 0) - 1),
+    }));
+  }, []);
 
-      const effectiveModeratorId =
-        selectedCalendarModeratorId &&
-        moderatorList.some((m) => m.id === selectedCalendarModeratorId)
-          ? selectedCalendarModeratorId
-          : moderatorList[0]?.id ?? null;
+  const topOffQueueIfNeeded = useCallback(async () => {
+    if (queueLoadingMore) return;
+    if (!queueHasMore || !queueCursor) return;
+    if (queue.length >= PAGE_SIZE) return;
 
-      setSelectedCalendarModeratorId(effectiveModeratorId);
+    const slotsRemaining = PAGE_SIZE - queue.length;
+    if (slotsRemaining <= 0) return;
 
-      if (!effectiveModeratorId) {
-        setCalendarSlots([]);
+    setQueueLoadingMore(true);
+    try {
+      const nextPage = await adminService.getPendingProfilesPage(slotsRemaining, queueCursor);
+      setQueue((prev) => [...prev, ...(nextPage?.items || [])].slice(0, PAGE_SIZE));
+      setQueueCursor(nextPage?.nextCursor ?? null);
+      setQueueHasMore(!!nextPage?.hasMore);
+    } catch (err) {
+      console.error('Queue top-off failed:', err);
+    } finally {
+      setQueueLoadingMore(false);
+    }
+  }, [queueHasMore, queueCursor, queueLoadingMore, queue.length]);
+
+  const handleReviewAction = useCallback(
+    async (action: 'approve' | 'reject') => {
+      if (!selectedUser?.id) return;
+
+      const reviewedId = selectedUser.id;
+      const remainingAfterRemoval = Math.max(0, queue.length - 1);
+
+      try {
+        if (action === 'approve') {
+          await adminService.approveProfile(reviewedId);
+        } else {
+          await adminService.rejectProfile(reviewedId);
+        }
+
+        removeReviewedUserFromQueue(reviewedId);
+        setSelectedUser(null);
+        setActiveModal(null);
+
+        if (remainingAfterRemoval < PAGE_SIZE) {
+          await topOffQueueIfNeeded();
+        }
+
+        await loadData(true);
+      } catch (e: any) {
+        dialog.show({
+          title: action === 'approve' ? 'Unable to approve' : 'Unable to reject',
+          message: e?.message ?? 'Please try again.',
+          tone: 'error',
+        });
+      }
+    },
+    [selectedUser, queue.length, removeReviewedUserFromQueue, topOffQueueIfNeeded, loadData, dialog]
+  );
+
+  const loadCalendar = useCallback(async () => {
+    setCalendarLoading(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) throw new Error('Not signed in');
+
+      setCalendarUserId(user.id);
+
+      const start = new Date(calendarDay);
+      start.setHours(0, 0, 0, 0);
+
+      const end = new Date(calendarDay);
+      end.setDate(end.getDate() + 1);
+      end.setHours(0, 0, 0, 0);
+
+      if (userRole === 'MODERATOR') {
+        const data = await moderatorCalendarService.getMyModeratorSlotsForRange(
+          start.toISOString(),
+          end.toISOString()
+        );
+        setCalendarSlots(data);
+        setSelectedCalendarModeratorId(user.id);
         return;
       }
 
-      const data = await moderatorCalendarService.getModeratorSlotsWithBookingDetails(
-        effectiveModeratorId,
-        start.toISOString(),
-        end.toISOString()
-      );
+      if (userRole === 'ADMIN') {
+        const moderatorList = await moderatorCalendarService.getActiveModerators();
+        setCalendarModerators(moderatorList);
 
-      setCalendarSlots(data);
-      return;
-    }
+        const effectiveModeratorId =
+          selectedCalendarModeratorId &&
+          moderatorList.some((m) => m.id === selectedCalendarModeratorId)
+            ? selectedCalendarModeratorId
+            : moderatorList[0]?.id ?? null;
 
-    setCalendarSlots([]);
-  } catch (e: any) {
-    console.error('Calendar load failed:', e);
-    if (activeTab === 'CALENDAR') {
-      dialog.show({
-        title: 'Error',
-        message: e?.message ?? 'Failed to load calendar',
-        tone: 'error',
-      });
+        setSelectedCalendarModeratorId(effectiveModeratorId);
+
+        if (!effectiveModeratorId) {
+          setCalendarSlots([]);
+          return;
+        }
+
+        const data = await moderatorCalendarService.getModeratorSlotsWithBookingDetails(
+          effectiveModeratorId,
+          start.toISOString(),
+          end.toISOString()
+        );
+
+        setCalendarSlots(data);
+        return;
+      }
+
+      setCalendarSlots([]);
+    } catch (e: any) {
+      console.error('Calendar load failed:', e);
+      if (activeTab === 'CALENDAR') {
+        dialog.show({
+          title: 'Error',
+          message: e?.message ?? 'Failed to load calendar',
+          tone: 'error',
+        });
+      }
+    } finally {
+      setCalendarLoading(false);
     }
-  } finally {
-    setCalendarLoading(false);
-  }
-}, [calendarDay, activeTab, dialog, userRole, selectedCalendarModeratorId]);
+  }, [calendarDay, activeTab, dialog, userRole, selectedCalendarModeratorId]);
 
   useEffect(() => {
-  if (activeTab !== 'CALENDAR') return;
+    if (activeTab !== 'CALENDAR') return;
 
-  setCalendarDay(startOfDay(new Date()));
-  setRescheduleFromSlotId(null);
+    setCalendarDay(startOfDay(new Date()));
+    setRescheduleFromSlotId(null);
 
-  if (userRole !== 'ADMIN') {
-    setSelectedCalendarModeratorId(null);
-  }
-}, [activeTab, userRole]);
+    if (userRole !== 'ADMIN') {
+      setSelectedCalendarModeratorId(null);
+    }
+  }, [activeTab, userRole]);
 
   useEffect(() => {
     if (activeTab !== 'CALENDAR') return;
@@ -695,115 +797,114 @@ const copyVideoLink = async (slot: ModeratorSlot) => {
   }, [activeTab, loadCalendar]);
 
   const createSlotsForSelectedWindow = useCallback(async () => {
-  try {
-    if (!canCreateCalendarSlots) return;
+    try {
+      if (!canCreateCalendarSlots) return;
 
-    if (isBeforeDay(calendarDay, today)) {
+      if (isBeforeDay(calendarDay, today)) {
+        dialog.show({
+          title: 'Invalid day',
+          message: 'You can only open slots from today onward.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      if (isAfterDay(calendarDay, maxCalendarDay)) {
+        dialog.show({
+          title: 'Invalid day',
+          message: 'You can only open slots up to 4 weeks ahead.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      if (!slotStartTime || !slotEndTime) {
+        dialog.show({
+          title: 'Missing Time',
+          message: 'Please enter both start and end time.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      if (slotEndTime <= slotStartTime) {
+        dialog.show({
+          title: 'Invalid Range',
+          message: 'End time must be after start time.',
+          tone: 'error',
+        });
+        return;
+      }
+
+      setCalendarSaving(true);
+
+      await moderatorCalendarService.createSlotsForDay(
+        calendarDayLabel,
+        slotStartTime,
+        slotEndTime,
+        CANADA_TIMEZONE
+      );
+
+      await loadCalendar();
+    } catch (e: any) {
       dialog.show({
-        title: 'Invalid day',
-        message: 'You can only open slots from today onward.',
+        title: 'Error',
+        message: e.message ?? 'Please try again',
         tone: 'error',
       });
-      return;
+    } finally {
+      setCalendarSaving(false);
     }
+  }, [
+    canCreateCalendarSlots,
+    calendarDay,
+    today,
+    maxCalendarDay,
+    slotStartTime,
+    slotEndTime,
+    calendarDayLabel,
+    loadCalendar,
+    dialog,
+  ]);
 
-    if (isAfterDay(calendarDay, maxCalendarDay)) {
-      dialog.show({
-        title: 'Invalid day',
-        message: 'You can only open slots up to 4 weeks ahead.',
-        tone: 'error',
-      });
-      return;
-    }
-
-    if (!slotStartTime || !slotEndTime) {
-      dialog.show({
-        title: 'Missing Time',
-        message: 'Please enter both start and end time.',
-        tone: 'error',
-      });
-      return;
-    }
-
-    if (slotEndTime <= slotStartTime) {
-      dialog.show({
-        title: 'Invalid Range',
-        message: 'End time must be after start time.',
-        tone: 'error',
-      });
-      return;
-    }
-
-    setCalendarSaving(true);
-
-    await moderatorCalendarService.createSlotsForDay(
-      calendarDayLabel,
-      slotStartTime,
-      slotEndTime,
-      CANADA_TIMEZONE
-    );
-
-    await loadCalendar();
-  } catch (e: any) {
+  const handleClearPastOpenSlots = useCallback(async () => {
     dialog.show({
-      title: 'Error',
-      message: e.message ?? 'Please try again',
-      tone: 'error',
-    });
-  } finally {
-    setCalendarSaving(false);
-  }
-}, [
-  canCreateCalendarSlots,
-  calendarDay,
-  today,
-  maxCalendarDay,
-  slotStartTime,
-  slotEndTime,
-  calendarDayLabel,
-  loadCalendar,
-  dialog,
-]);
+      title: 'Clear past open slots?',
+      message: 'This will permanently remove only past open slots for you. Booked slots will remain.',
+      tone: 'warning',
+      actions: [
+        { label: 'Cancel', variant: 'secondary' },
+        {
+          label: 'Clear Past Slots',
+          variant: 'danger',
+          onPress: async () => {
+            try {
+              setCalendarSaving(true);
 
-const handleClearPastOpenSlots = useCallback(async () => {
-  dialog.show({
-    title: 'Clear past open slots?',
-    message: 'This will permanently remove only past open slots for you. Booked slots will remain.',
-    tone: 'warning',
-    actions: [
-      { label: 'Cancel', variant: 'secondary' },
-      {
-        label: 'Clear Past Slots',
-        variant: 'danger',
-        onPress: async () => {
-          try {
-            setCalendarSaving(true);
+              const count = await moderatorCalendarService.clearPastOpenSlots();
 
-            const count = await moderatorCalendarService.clearPastOpenSlots();
+              await loadCalendar();
 
-            await loadCalendar();
-
-            toast.show(
-              count > 0
-                ? `Removed ${count} past open slot${count === 1 ? '' : 's'}.`
-                : 'No past open slots to clear.',
-              'success'
-            );
-          } catch (e: any) {
-            dialog.show({
-              title: 'Unable to clear past open slots',
-              message: e?.message ?? 'Please try again.',
-              tone: 'error',
-            });
-          } finally {
-            setCalendarSaving(false);
-          }
+              toast.show(
+                count > 0
+                  ? `Removed ${count} past open slot${count === 1 ? '' : 's'}.`
+                  : 'No past open slots to clear.',
+                'success'
+              );
+            } catch (e: any) {
+              dialog.show({
+                title: 'Unable to clear past open slots',
+                message: e?.message ?? 'Please try again.',
+                tone: 'error',
+              });
+            } finally {
+              setCalendarSaving(false);
+            }
+          },
         },
-      },
-    ],
-  });
-}, [dialog, loadCalendar, toast]);
-
+      ],
+    });
+  }, [dialog, loadCalendar, toast]);
 
   const handleDeleteCalendarSlot = useCallback(
     (slotId: string) => {
@@ -867,7 +968,6 @@ const handleClearPastOpenSlots = useCallback(async () => {
     [loadCalendar, rescheduleFromSlotId, dialog, toast]
   );
 
-  
   const handleCancelCalendarSlot = useCallback(
     async (slotId: string) => {
       try {
@@ -890,271 +990,271 @@ const handleClearPastOpenSlots = useCallback(async () => {
   );
 
   const shiftCalendarDay = useCallback(
-  (delta: number) => {
-    const next = addDays(calendarDay, delta);
+    (delta: number) => {
+      const next = addDays(calendarDay, delta);
 
-    if (isBeforeDay(next, today)) return;
-    if (isAfterDay(next, maxCalendarDay)) return;
+      if (isBeforeDay(next, today)) return;
+      if (isAfterDay(next, maxCalendarDay)) return;
 
-    setCalendarDay(next);
-  },
-  [calendarDay, today, maxCalendarDay]
-);
+      setCalendarDay(next);
+    },
+    [calendarDay, today, maxCalendarDay]
+  );
 
-const renderModeratorCalendar = () => (
-  <View style={styles.calendarPage}>
-    <View style={styles.calendarHeader}>
-      <View style={styles.calendarHeaderCopy}>
-        <Text style={styles.settingsTitle}>
-          {isCalendarAdmin ? 'Moderator Calendars' : 'Moderator Calendar'}
-        </Text>
-        <Text style={styles.calendarSubtitle}>
-          Toronto, IST, and GMT shown together
-        </Text>
-      </View>
-    </View>
-
-    {isCalendarAdmin ? (
-      <View style={styles.calendarModeratorSection}>
-        <Text style={styles.calendarModeratorLabel}>Choose Moderator</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.calendarModeratorPillRow}
-        >
-          {calendarModerators.map((moderator) => {
-            const active = moderator.id === selectedCalendarModeratorId;
-
-            return (
-              <TouchableOpacity
-                key={moderator.id}
-                style={[
-                  styles.calendarModeratorPill,
-                  active && styles.calendarModeratorPillActive,
-                ]}
-                onPress={() => {
-                  setSelectedCalendarModeratorId(moderator.id);
-                  setRescheduleFromSlotId(null);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.calendarModeratorPillText,
-                    active && styles.calendarModeratorPillTextActive,
-                  ]}
-                >
-                  {moderator.full_name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        <Text style={styles.calendarModeratorHelper}>
-          {selectedCalendarModerator
-            ? `Showing ${selectedCalendarModerator.full_name}'s calendar`
-            : 'No moderators available right now'}
-        </Text>
-      </View>
-    ) : null}
-
-    <View style={styles.calendarDayBar}>
-      <TouchableOpacity
-        onPress={() => shiftCalendarDay(-1)}
-        style={[styles.calendarDayArrow, !canGoCalendarPrev && styles.calendarDayArrowDisabled]}
-        disabled={!canGoCalendarPrev}
-      >
-        <Ionicons
-          name="chevron-back"
-          size={18}
-          color={canGoCalendarPrev ? theme.colors.text : theme.colors.mutedText}
-        />
-      </TouchableOpacity>
-
-      <View style={styles.calendarDayTextWrap}>
-        <Text style={styles.calendarDayText}>{calendarDayLabel}</Text>
-        <Text style={styles.calendarDayHint}>Available from today through 4 weeks ahead</Text>
-      </View>
-
-      <TouchableOpacity
-        onPress={() => shiftCalendarDay(1)}
-        style={[styles.calendarDayArrow, !canGoCalendarNext && styles.calendarDayArrowDisabled]}
-        disabled={!canGoCalendarNext}
-      >
-        <Ionicons
-          name="chevron-forward"
-          size={18}
-          color={canGoCalendarNext ? theme.colors.text : theme.colors.mutedText}
-        />
-      </TouchableOpacity>
-    </View>
-
-    {canCreateCalendarSlots ? (
-      <View style={styles.slotComposerCard}>
-        <Text style={styles.slotComposerTitle}>Create Availability</Text>
-        <Text style={styles.slotComposerSub}>
-          Add half-hour slots for the selected day in Toronto time.
-        </Text>
-
-        <View style={styles.slotComposerGrid}>
-          <View style={styles.slotTimeField}>
-            <Text style={styles.slotTimeLabel}>Start</Text>
-            <TouchableOpacity
-              style={styles.slotTimeInput}
-              onPress={() => setTimePickerMode('START')}
-            >
-              <Text style={styles.slotTimeInputText}>{slotStartTime}</Text>
-              <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.slotTimeField}>
-            <Text style={styles.slotTimeLabel}>End</Text>
-            <TouchableOpacity
-              style={styles.slotTimeInput}
-              onPress={() => setTimePickerMode('END')}
-            >
-              <Text style={styles.slotTimeInputText}>{slotEndTime}</Text>
-              <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
-            </TouchableOpacity>
-          </View>
+  const renderModeratorCalendar = () => (
+    <View style={styles.calendarPage}>
+      <View style={styles.calendarHeader}>
+        <View style={styles.calendarHeaderCopy}>
+          <Text style={styles.settingsTitle}>
+            {isCalendarAdmin ? 'Moderator Calendars' : 'Moderator Calendar'}
+          </Text>
+          <Text style={styles.calendarSubtitle}>
+            Toronto, IST, and GMT shown together
+          </Text>
         </View>
+      </View>
 
-        <View style={styles.slotComposerActions}>
-          <TouchableOpacity
-            style={styles.calendarCreateBtn}
-            onPress={createSlotsForSelectedWindow}
-            disabled={calendarSaving}
+      {isCalendarAdmin ? (
+        <View style={styles.calendarModeratorSection}>
+          <Text style={styles.calendarModeratorLabel}>Choose Moderator</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.calendarModeratorPillRow}
           >
-            <Ionicons name="add-circle-outline" size={18} color={theme.colors.text} />
-            <Text style={styles.calendarCreateBtnText}>Add Slots</Text>
-          </TouchableOpacity>
+            {calendarModerators.map((moderator) => {
+              const active = moderator.id === selectedCalendarModeratorId;
 
-          <View style={styles.calendarDangerStack}>
+              return (
+                <TouchableOpacity
+                  key={moderator.id}
+                  style={[
+                    styles.calendarModeratorPill,
+                    active && styles.calendarModeratorPillActive,
+                  ]}
+                  onPress={() => {
+                    setSelectedCalendarModeratorId(moderator.id);
+                    setRescheduleFromSlotId(null);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.calendarModeratorPillText,
+                      active && styles.calendarModeratorPillTextActive,
+                    ]}
+                  >
+                    {moderator.full_name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <Text style={styles.calendarModeratorHelper}>
+            {selectedCalendarModerator
+              ? `Showing ${selectedCalendarModerator.full_name}'s calendar`
+              : 'No moderators available right now'}
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={styles.calendarDayBar}>
+        <TouchableOpacity
+          onPress={() => shiftCalendarDay(-1)}
+          style={[styles.calendarDayArrow, !canGoCalendarPrev && styles.calendarDayArrowDisabled]}
+          disabled={!canGoCalendarPrev}
+        >
+          <Ionicons
+            name="chevron-back"
+            size={18}
+            color={canGoCalendarPrev ? theme.colors.text : theme.colors.mutedText}
+          />
+        </TouchableOpacity>
+
+        <View style={styles.calendarDayTextWrap}>
+          <Text style={styles.calendarDayText}>{calendarDayLabel}</Text>
+          <Text style={styles.calendarDayHint}>Available from today through 4 weeks ahead</Text>
+        </View>
+
+        <TouchableOpacity
+          onPress={() => shiftCalendarDay(1)}
+          style={[styles.calendarDayArrow, !canGoCalendarNext && styles.calendarDayArrowDisabled]}
+          disabled={!canGoCalendarNext}
+        >
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={canGoCalendarNext ? theme.colors.text : theme.colors.mutedText}
+          />
+        </TouchableOpacity>
+      </View>
+
+      {canCreateCalendarSlots ? (
+        <View style={styles.slotComposerCard}>
+          <Text style={styles.slotComposerTitle}>Create Availability</Text>
+          <Text style={styles.slotComposerSub}>
+            Add half-hour slots for the selected day in Toronto time.
+          </Text>
+
+          <View style={styles.slotComposerGrid}>
+            <View style={styles.slotTimeField}>
+              <Text style={styles.slotTimeLabel}>Start</Text>
+              <TouchableOpacity
+                style={styles.slotTimeInput}
+                onPress={() => setTimePickerMode('START')}
+              >
+                <Text style={styles.slotTimeInputText}>{slotStartTime}</Text>
+                <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.slotTimeField}>
+              <Text style={styles.slotTimeLabel}>End</Text>
+              <TouchableOpacity
+                style={styles.slotTimeInput}
+                onPress={() => setTimePickerMode('END')}
+              >
+                <Text style={styles.slotTimeInputText}>{slotEndTime}</Text>
+                <Ionicons name="chevron-down" size={16} color={theme.colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.slotComposerActions}>
             <TouchableOpacity
-              style={styles.calendarDangerBtn}
-              onPress={() => {
-                dialog.show({
-                  title: 'Clear open slots?',
-                  message: `This will remove all unbooked slots for ${calendarDayLabel}. Booked slots will remain.`,
-                  tone: 'warning',
-                  actions: [
-                    { label: 'Cancel', variant: 'secondary' },
-                    {
-                      label: 'Clear Slots',
-                      variant: 'danger',
-                      onPress: async () => {
-                        try {
-                          setCalendarSaving(true);
+              style={styles.calendarCreateBtn}
+              onPress={createSlotsForSelectedWindow}
+              disabled={calendarSaving}
+            >
+              <Ionicons name="add-circle-outline" size={18} color={theme.colors.text} />
+              <Text style={styles.calendarCreateBtnText}>Add Slots</Text>
+            </TouchableOpacity>
 
-                          const count = await moderatorCalendarService.clearOpenSlotsForDay(
-                            calendarDayLabel,
-                            CANADA_TIMEZONE
-                          );
+            <View style={styles.calendarDangerStack}>
+              <TouchableOpacity
+                style={styles.calendarDangerBtn}
+                onPress={() => {
+                  dialog.show({
+                    title: 'Clear open slots?',
+                    message: `This will remove all unbooked slots for ${calendarDayLabel}. Booked slots will remain.`,
+                    tone: 'warning',
+                    actions: [
+                      { label: 'Cancel', variant: 'secondary' },
+                      {
+                        label: 'Clear Slots',
+                        variant: 'danger',
+                        onPress: async () => {
+                          try {
+                            setCalendarSaving(true);
 
-                          await loadCalendar();
+                            const count = await moderatorCalendarService.clearOpenSlotsForDay(
+                              calendarDayLabel,
+                              CANADA_TIMEZONE
+                            );
 
-                          toast.show(
-                            `Removed ${count} open slot${count === 1 ? '' : 's'}.`,
-                            'success'
-                          );
-                        } catch (e: any) {
-                          dialog.show({
-                            title: 'Unable to clear slots',
-                            message: e?.message ?? 'Please try again.',
-                            tone: 'error',
-                          });
-                        } finally {
-                          setCalendarSaving(false);
-                        }
+                            await loadCalendar();
+
+                            toast.show(
+                              `Removed ${count} open slot${count === 1 ? '' : 's'}.`,
+                              'success'
+                            );
+                          } catch (e: any) {
+                            dialog.show({
+                              title: 'Unable to clear slots',
+                              message: e?.message ?? 'Please try again.',
+                              tone: 'error',
+                            });
+                          } finally {
+                            setCalendarSaving(false);
+                          }
+                        },
                       },
-                    },
-                  ],
-                });
-              }}
-              disabled={calendarSaving}
-            >
-              <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
-              <Text style={styles.calendarDangerBtnText}>Clear Open Slots</Text>
-            </TouchableOpacity>
+                    ],
+                  });
+                }}
+                disabled={calendarSaving}
+              >
+                <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
+                <Text style={styles.calendarDangerBtnText}>Clear Open Slots</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.calendarWarnBtn}
-              onPress={handleClearPastOpenSlots}
-              disabled={calendarSaving}
-            >
-              <Ionicons name="time-outline" size={18} color="#9A3412" />
-              <Text style={styles.calendarWarnBtnText}>Clear Past Open Slots</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.calendarWarnBtn}
+                onPress={handleClearPastOpenSlots}
+                disabled={calendarSaving}
+              >
+                <Ionicons name="time-outline" size={18} color="#9A3412" />
+                <Text style={styles.calendarWarnBtnText}>Clear Past Open Slots</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
-    ) : isCalendarAdmin ? (
-      <View style={styles.calendarReadOnlyCard}>
-        <Text style={styles.calendarReadOnlyTitle}>Read-only view</Text>
-        <Text style={styles.calendarReadOnlySub}>
-          Admins can inspect all moderator calendars, but only moderators can create or clear slots.
-        </Text>
-      </View>
-    ) : null}
+      ) : isCalendarAdmin ? (
+        <View style={styles.calendarReadOnlyCard}>
+          <Text style={styles.calendarReadOnlyTitle}>Read-only view</Text>
+          <Text style={styles.calendarReadOnlySub}>
+            Admins can inspect all moderator calendars, but only moderators can create or clear slots.
+          </Text>
+        </View>
+      ) : null}
 
-    {calendarLoading ? (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Loading calendar...</Text>
-      </View>
-    ) : (
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={styles.calendarListContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {calendarSlots.length === 0 ? (
-          <View style={styles.calendarEmptyCard}>
-            <Text style={styles.calendarEmptyTitle}>No slots yet</Text>
-            <Text style={styles.calendarEmptySub}>
-              {canCreateCalendarSlots
-                ? 'Create availability for this day to start taking bookings.'
-                : 'No moderator slots are available for this day yet.'}
-            </Text>
-          </View>
-        ) : (
-          calendarSlots.map((slot) => {
-            const isMine = !!calendarUserId && slot.booked_by_user_id === calendarUserId;
+      {calendarLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={styles.loadingText}>Loading calendar...</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.calendarListContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {calendarSlots.length === 0 ? (
+            <View style={styles.calendarEmptyCard}>
+              <Text style={styles.calendarEmptyTitle}>No slots yet</Text>
+              <Text style={styles.calendarEmptySub}>
+                {canCreateCalendarSlots
+                  ? 'Create availability for this day to start taking bookings.'
+                  : 'No moderator slots are available for this day yet.'}
+              </Text>
+            </View>
+          ) : (
+            calendarSlots.map((slot) => {
+              const isMine = !!calendarUserId && slot.booked_by_user_id === calendarUserId;
 
-            return (
-              <SlotCard
-                key={slot.id}
-                slot={slot}
-                isModerator={isCalendarModerator}
-                isAdmin={isCalendarAdmin}
-                isMine={isMine}
-                onCancel={
-                  isCalendarModerator ? () => handleCancelCalendarSlot(slot.id) : undefined
-                }
-                onReschedule={
-                  isCalendarModerator ? () => setRescheduleFromSlotId(slot.id) : undefined
-                }
-                onDelete={
-                  isCalendarModerator ? () => handleDeleteCalendarSlot(slot.id) : undefined
-                }
-                onWhatsApp={openWhatsApp}
-                onJoinVideo={openVideoRoom}
-                onCopyVideoLink={copyVideoLink}
-              />
-            );
-          })
-        )}
-      </ScrollView>
-    )}
+              return (
+                <SlotCard
+                  key={slot.id}
+                  slot={slot}
+                  isModerator={isCalendarModerator}
+                  isAdmin={isCalendarAdmin}
+                  isMine={isMine}
+                  onCancel={
+                    isCalendarModerator ? () => handleCancelCalendarSlot(slot.id) : undefined
+                  }
+                  onReschedule={
+                    isCalendarModerator ? () => setRescheduleFromSlotId(slot.id) : undefined
+                  }
+                  onDelete={
+                    isCalendarModerator ? () => handleDeleteCalendarSlot(slot.id) : undefined
+                  }
+                  onWhatsApp={openWhatsApp}
+                  onJoinVideo={openVideoRoom}
+                  onCopyVideoLink={copyVideoLink}
+                />
+              );
+            })
+          )}
+        </ScrollView>
+      )}
 
-    {calendarSaving ? (
-      <View style={styles.calendarSavingOverlay}>
-        <ActivityIndicator size="small" color={theme.colors.primary} />
-      </View>
-    ) : null}
-  </View>
-);
+      {calendarSaving ? (
+        <View style={styles.calendarSavingOverlay}>
+          <ActivityIndicator size="small" color={theme.colors.primary} />
+        </View>
+      ) : null}
+    </View>
+  );
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -1358,23 +1458,40 @@ const renderModeratorCalendar = () => (
           <View style={{ flex: 2 }}>
             <SectionHeader styles={styles} title="Verification Queue" />
             <View style={styles.groupCard}>
-              <Text style={styles.cardHeader}>Pending Approval ({queue.length})</Text>
+              <Text style={styles.cardHeader}>Pending Approval ({stats.pendingApprovals})</Text>
+
               {queue.length === 0 ? (
                 <Text style={styles.emptyText}>Queue is currently empty</Text>
               ) : (
-                queue.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    onPress={() => {
-                      setSelectedUser(item);
-                      setActiveModal('REVIEW');
-                    }}
-                    style={styles.itemRow}
-                  >
-                    <Text style={{ fontWeight: '600', color: theme.colors.text }}>{item.full_name}</Text>
-                    <Ionicons name="chevron-forward" size={18} color={theme.colors.mutedText} />
-                  </TouchableOpacity>
-                ))
+                <>
+                  {queue.map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      onPress={() => {
+                        setSelectedUser(item);
+                        setActiveModal('REVIEW');
+                      }}
+                      style={styles.itemRow}
+                    >
+                      <Text style={{ fontWeight: '600', color: theme.colors.text }}>
+                        {item.full_name}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={18} color={theme.colors.mutedText} />
+                    </TouchableOpacity>
+                  ))}
+
+                  {queueHasMore && queue.length < PAGE_SIZE ? (
+                    <TouchableOpacity
+                      style={styles.loadMoreBtn}
+                      onPress={loadMoreQueue}
+                      disabled={queueLoadingMore}
+                    >
+                      <Text style={styles.loadMoreBtnText}>
+                        {queueLoadingMore ? 'Loading...' : 'Load More'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </>
               )}
             </View>
 
@@ -1389,7 +1506,8 @@ const renderModeratorCalendar = () => (
                   <TouchableOpacity
                     style={styles.banBtn}
                     onPress={() => {
-                      setRevokeForm({ ...revokeForm, email: r.targetEmail });
+                      setRevokeForm({ ...revokeForm, email: r.targetEmail, fullName: r.targetName || '' });
+                      setRevokeComment(r.reason ? `Flagged for: ${r.reason}` : '');
                       setActiveModal('REVOKE_ACCESS');
                     }}
                   >
@@ -1397,6 +1515,47 @@ const renderModeratorCalendar = () => (
                   </TouchableOpacity>
                 </View>
               ))}
+            </View>
+
+            <View style={[styles.groupCard, { marginTop: 20 }]}>
+              <Text style={styles.cardHeader}>Deactivated Users ({deactivatedUsers.length})</Text>
+              {deactivatedUsers.length === 0 ? (
+                <Text style={styles.emptyText}>No deactivated users</Text>
+              ) : (
+                deactivatedUsers.map((user) => (
+                  <View key={user.id} style={styles.itemRow}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={{ fontWeight: '700', color: theme.colors.text }}>
+                        {user.full_name || user.email || 'User'}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: theme.colors.mutedText }}>
+                        {user.email || 'No email'}
+                      </Text>
+                      {!!user.lastActionNote && (
+                        <Text style={{ fontSize: 12, color: theme.colors.mutedText, marginTop: 4 }}>
+                          {user.lastActionNote}
+                        </Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.banBtn}
+                      onPress={() => {
+                        setReactivateForm({
+                          id: user.id || '',
+                          email: user.email || '',
+                          fullName: user.full_name || '',
+                          note: '',
+                        });
+                        setActiveModal('REACTIVATE_USER');
+                      }}
+                    >
+                      <Text style={[styles.banText, { color: theme.colors.success ?? theme.colors.primary }]}>
+                        Reactivate
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
             </View>
           </View>
 
@@ -1495,21 +1654,13 @@ const renderModeratorCalendar = () => (
           <View style={styles.modalFooter}>
             <TouchableOpacity
               style={[styles.modalBtn, { backgroundColor: theme.colors.danger }]}
-              onPress={async () => {
-                await adminService.rejectProfile(selectedUser.id);
-                setActiveModal(null);
-                loadData(true);
-              }}
+              onPress={() => handleReviewAction('reject')}
             >
               <Text style={styles.modalBtnText}>Reject</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.modalBtn, { backgroundColor: theme.colors.success ?? theme.colors.primary }]}
-              onPress={async () => {
-                await adminService.approveProfile(selectedUser.id);
-                setActiveModal(null);
-                loadData(true);
-              }}
+              onPress={() => handleReviewAction('approve')}
             >
               <Text style={styles.modalBtnText}>Approve</Text>
             </TouchableOpacity>
@@ -1593,10 +1744,10 @@ const renderModeratorCalendar = () => (
                       onPress={() => startEditStory(story)}
                       style={[
                         styles.itemRow,
-                        editingStoryId === story.id && { 
+                        editingStoryId === story.id && {
                           backgroundColor: '#EEF6FF',
                           borderLeftWidth: 4,
-                          borderLeftColor: '#7B1E3A', 
+                          borderLeftColor: '#7B1E3A',
                         },
                       ]}
                     >
@@ -1784,19 +1935,90 @@ const renderModeratorCalendar = () => (
       <Modal visible={activeModal === 'REVOKE_ACCESS'} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.utilityModal}>
-            <Text style={[styles.modalTitle, { color: theme.colors.danger }]}>Revoke Privileges</Text>
+            <Text style={[styles.modalTitle, { color: theme.colors.danger }]}>Deactivate User</Text>
             <TextInput style={styles.input} placeholder="User Email" value={revokeForm.email} onChangeText={(t) => setRevokeForm({ ...revokeForm, email: t })} />
+            <TextInput
+              style={[styles.input, { height: 96 }]}
+              placeholder="Comment about what happened"
+              value={revokeComment}
+              onChangeText={setRevokeComment}
+              multiline
+            />
             <TouchableOpacity
               style={[styles.applyBtn, { backgroundColor: theme.colors.danger }]}
               onPress={async () => {
-                await adminService.revokeAccess(revokeForm.email);
-                setActiveModal(null);
-                loadData(true);
+                try {
+                  await adminService.revokeAccess(revokeForm.email, revokeComment);
+                  toast.show('User was deactivated.', 'success');
+                  setRevokeComment('');
+                  setActiveModal(null);
+                  await loadData(true);
+                } catch (e: any) {
+                  dialog.show({
+                    title: 'Unable to deactivate',
+                    message: e?.message ?? 'Please try again.',
+                    tone: 'error',
+                  });
+                }
               }}
             >
               <Text style={styles.applyText}>Deactivate Now</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setActiveModal(null)}>
+            <TouchableOpacity
+              onPress={() => {
+                setRevokeComment('');
+                setActiveModal(null);
+              }}
+            >
+              <Text style={styles.cancelText}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={activeModal === 'REACTIVATE_USER'} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.utilityModal}>
+            <Text style={[styles.modalTitle, { color: theme.colors.success ?? theme.colors.primary }]}>Reactivate User</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="User Email"
+              value={reactivateForm.email}
+              onChangeText={(t) => setReactivateForm((prev) => ({ ...prev, email: t }))}
+            />
+            <TextInput
+              style={[styles.input, { height: 96 }]}
+              placeholder="Comment about resolution"
+              value={reactivateForm.note}
+              onChangeText={(t) => setReactivateForm((prev) => ({ ...prev, note: t }))}
+              multiline
+            />
+            <TouchableOpacity
+              style={[styles.applyBtn, { backgroundColor: theme.colors.success ?? theme.colors.primary }]}
+              onPress={async () => {
+                try {
+                  await adminService.reactivateUser(reactivateForm.email, reactivateForm.note);
+                  toast.show('User was reactivated.', 'success');
+                  setReactivateForm({ id: '', email: '', fullName: '', note: '' });
+                  setActiveModal(null);
+                  await loadData(true);
+                } catch (e: any) {
+                  dialog.show({
+                    title: 'Unable to reactivate',
+                    message: e?.message ?? 'Please try again.',
+                    tone: 'error',
+                  });
+                }
+              }}
+            >
+              <Text style={styles.applyText}>Reactivate Now</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setReactivateForm({ id: '', email: '', fullName: '', note: '' });
+                setActiveModal(null);
+              }}
+            >
               <Text style={styles.cancelText}>Dismiss</Text>
             </TouchableOpacity>
           </View>
@@ -1963,7 +2185,7 @@ const StatCard = ({ label, value, icon, color, styles }: any) => {
 
   return (
     <View style={styles.statCard}>
-      <Ionicons name={icon} size={24} color={color}  />
+      <Ionicons name={icon} size={24} color={color} />
       <View style={{ marginLeft: 15 }}>
         <Text style={styles.statValue}>{displayValue}</Text>
         <Text style={styles.statLabel}>{label}</Text>
@@ -2082,6 +2304,22 @@ function makeStyles(theme: any) {
     utilBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: surface, padding: 15, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: border },
     utilLabel: { fontWeight: '700', fontSize: 13, color: text },
     dangerBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 15, borderRadius: 16, borderWidth: 1, borderColor: danger, marginTop: 10 },
+
+    loadMoreBtn: {
+      margin: 15,
+      marginTop: 8,
+      paddingVertical: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: border,
+      backgroundColor: surface2,
+      alignItems: 'center',
+    },
+    loadMoreBtnText: {
+      color: text,
+      fontSize: 12,
+      fontWeight: '800',
+    },
 
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
     utilityModal: { backgroundColor: surface, padding: 30, borderRadius: 24, width: 400, alignItems: 'center', ...Platform.select({ web: { boxShadow: '0 10px 25px rgba(0,0,0,0.1)' } as any }) },
@@ -2259,326 +2497,327 @@ function makeStyles(theme: any) {
     timePickerItemTextActive: {
       color: surface2,
     },
-calendarPage: {
-  flex: 1,
-  padding: Platform.OS === 'web' ? 32 : 18,
-  backgroundColor: bg,
-},
 
-calendarHeader: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  alignItems: 'flex-start',
-  marginBottom: 18,
-  gap: 16,
-  flexWrap: 'wrap',
-},
+    calendarPage: {
+      flex: 1,
+      padding: Platform.OS === 'web' ? 32 : 18,
+      backgroundColor: bg,
+    },
 
-calendarHeaderCopy: {
-  flexShrink: 1,
-  minWidth: 0,
-},
+    calendarHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: 18,
+      gap: 16,
+      flexWrap: 'wrap',
+    },
 
-calendarSubtitle: {
-  marginTop: 6,
-  fontSize: 13,
-  fontWeight: '700',
-  color: muted,
-},
+    calendarHeaderCopy: {
+      flexShrink: 1,
+      minWidth: 0,
+    },
 
-calendarDayBar: {
-  flexDirection: 'row',
-  justifyContent: 'center',
-  alignItems: 'center',
-  gap: 14,
-  marginBottom: 16,
-},
+    calendarSubtitle: {
+      marginTop: 6,
+      fontSize: 13,
+      fontWeight: '700',
+      color: muted,
+    },
 
-calendarDayArrow: {
-  backgroundColor: surface,
-  borderWidth: 1,
-  borderColor: border,
-  borderRadius: 999,
-  padding: 8,
-},
+    calendarDayBar: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 14,
+      marginBottom: 16,
+    },
 
-calendarDayArrowDisabled: {
-  opacity: 0.5,
-},
+    calendarDayArrow: {
+      backgroundColor: surface,
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 999,
+      padding: 8,
+    },
 
-calendarDayTextWrap: {
-  alignItems: 'center',
-  justifyContent: 'center',
-  minWidth: 0,
-  flexShrink: 1,
-  paddingHorizontal: 6,
-},
+    calendarDayArrowDisabled: {
+      opacity: 0.5,
+    },
 
-calendarDayText: {
-  fontSize: 16,
-  fontWeight: '800',
-  color: text,
-  textAlign: 'center',
-},
+    calendarDayTextWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 0,
+      flexShrink: 1,
+      paddingHorizontal: 6,
+    },
 
-calendarDayHint: {
-  marginTop: 4,
-  fontSize: 12,
-  color: muted,
-  fontWeight: '700',
-  textAlign: 'center',
-},
+    calendarDayText: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: text,
+      textAlign: 'center',
+    },
 
-calendarListContent: {
-  paddingBottom: 40,
-},
+    calendarDayHint: {
+      marginTop: 4,
+      fontSize: 12,
+      color: muted,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
 
-calendarEmptyCard: {
-  backgroundColor: surface,
-  borderRadius: 20,
-  borderWidth: 1,
-  borderColor: border,
-  padding: 20,
-},
+    calendarListContent: {
+      paddingBottom: 40,
+    },
 
-calendarEmptyTitle: {
-  fontSize: 18,
-  fontWeight: '800',
-  color: text,
-},
+    calendarEmptyCard: {
+      backgroundColor: surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 20,
+    },
 
-calendarEmptySub: {
-  marginTop: 8,
-  color: muted,
-  lineHeight: 20,
-  fontWeight: '600',
-},
+    calendarEmptyTitle: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: text,
+    },
 
-calendarSavingOverlay: {
-  position: 'absolute',
-  right: 24,
-  bottom: 24,
-  backgroundColor: surface2,
-  borderWidth: 1,
-  borderColor: border,
-  borderRadius: 999,
-  paddingHorizontal: 14,
-  paddingVertical: 10,
-},
+    calendarEmptySub: {
+      marginTop: 8,
+      color: muted,
+      lineHeight: 20,
+      fontWeight: '600',
+    },
 
-slotComposerCard: {
-  backgroundColor: surface,
-  borderRadius: 20,
-  borderWidth: 1,
-  borderColor: border,
-  padding: 18,
-  marginBottom: 18,
-},
+    calendarSavingOverlay: {
+      position: 'absolute',
+      right: 24,
+      bottom: 24,
+      backgroundColor: surface2,
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
 
-slotComposerTitle: {
-  fontSize: 15,
-  fontWeight: '900',
-  color: text,
-},
+    slotComposerCard: {
+      backgroundColor: surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 18,
+      marginBottom: 18,
+    },
 
-slotComposerSub: {
-  marginTop: 4,
-  fontSize: 12,
-  fontWeight: '700',
-  color: muted,
-},
+    slotComposerTitle: {
+      fontSize: 15,
+      fontWeight: '900',
+      color: text,
+    },
 
-slotComposerGrid: {
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  gap: 12,
-  marginTop: 14,
-},
+    slotComposerSub: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '700',
+      color: muted,
+    },
 
-slotTimeField: {
-  flexGrow: 1,
-  flexShrink: 1,
-  flexBasis: 220,
-  minWidth: 160,
-},
+    slotComposerGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+      marginTop: 14,
+    },
 
-slotTimeLabel: {
-  fontSize: 12,
-  fontWeight: '800',
-  color: muted,
-  marginBottom: 6,
-},
+    slotTimeField: {
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: 220,
+      minWidth: 160,
+    },
 
-slotTimeInput: {
-  backgroundColor: bg,
-  borderWidth: 1,
-  borderColor: border,
-  borderRadius: 12,
-  paddingHorizontal: 12,
-  paddingVertical: 12,
-  minHeight: 48,
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  width: '100%',
-},
+    slotTimeLabel: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: muted,
+      marginBottom: 6,
+    },
 
-slotTimeInputText: {
-  fontSize: 14,
-  fontWeight: '800',
-  color: text,
-},
+    slotTimeInput: {
+      backgroundColor: bg,
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      width: '100%',
+    },
 
-slotComposerActions: {
-  marginTop: 14,
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  gap: 12,
-  alignItems: 'flex-start',
-},
+    slotTimeInputText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: text,
+    },
 
-calendarCreateBtn: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8,
-  backgroundColor: surface,
-  borderRadius: 14,
-  borderWidth: 1,
-  borderColor: border,
-  paddingHorizontal: 14,
-  paddingVertical: 10,
-  minHeight: 48,
-  minWidth: 150,
-  flexShrink: 1,
-},
+    slotComposerActions: {
+      marginTop: 14,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+      alignItems: 'flex-start',
+    },
 
-calendarCreateBtnText: {
-  fontWeight: '800',
-  color: text,
-  fontSize: 13,
-  textAlign: 'center',
-},
+    calendarCreateBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: border,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minHeight: 48,
+      minWidth: 150,
+      flexShrink: 1,
+    },
 
-calendarDangerStack: {
-  flexDirection: 'column',
-  gap: 10,
-  flexGrow: 1,
-  flexShrink: 1,
-  minWidth: 220,
-},
+    calendarCreateBtnText: {
+      fontWeight: '800',
+      color: text,
+      fontSize: 13,
+      textAlign: 'center',
+    },
 
-calendarDangerBtn: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8,
-  backgroundColor: surface,
-  borderRadius: 14,
-  borderWidth: 1,
-  borderColor: danger,
-  paddingHorizontal: 14,
-  paddingVertical: 10,
-  minHeight: 48,
-  width: '100%',
-},
+    calendarDangerStack: {
+      flexDirection: 'column',
+      gap: 10,
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 220,
+    },
 
-calendarDangerBtnText: {
-  fontWeight: '800',
-  color: danger,
-  fontSize: 13,
-  textAlign: 'center',
-},
+    calendarDangerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: danger,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minHeight: 48,
+      width: '100%',
+    },
 
-calendarWarnBtn: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8,
-  backgroundColor: surface,
-  borderRadius: 14,
-  borderWidth: 1,
-  borderColor: '#FDBA74',
-  paddingHorizontal: 14,
-  paddingVertical: 10,
-  minHeight: 48,
-  width: '100%',
-},
+    calendarDangerBtnText: {
+      fontWeight: '800',
+      color: danger,
+      fontSize: 13,
+      textAlign: 'center',
+    },
 
-calendarWarnBtnText: {
-  fontWeight: '800',
-  color: '#9A3412',
-  fontSize: 13,
-  textAlign: 'center',
-},
+    calendarWarnBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: '#FDBA74',
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minHeight: 48,
+      width: '100%',
+    },
 
-calendarModeratorSection: {
-  marginBottom: 14,
-},
+    calendarWarnBtnText: {
+      fontWeight: '800',
+      color: '#9A3412',
+      fontSize: 13,
+      textAlign: 'center',
+    },
 
-calendarModeratorLabel: {
-  fontSize: 13,
-  fontWeight: '800',
-  color: text,
-  marginBottom: 8,
-},
+    calendarModeratorSection: {
+      marginBottom: 14,
+    },
 
-calendarModeratorPillRow: {
-  gap: 8,
-  paddingRight: 10,
-},
+    calendarModeratorLabel: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: text,
+      marginBottom: 8,
+    },
 
-calendarModeratorPill: {
-  backgroundColor: surface2,
-  borderWidth: 1,
-  borderColor: border,
-  borderRadius: 999,
-  paddingHorizontal: 14,
-  paddingVertical: 10,
-},
+    calendarModeratorPillRow: {
+      gap: 8,
+      paddingRight: 10,
+    },
 
-calendarModeratorPillActive: {
-  backgroundColor: primary,
-  borderColor: primary,
-},
+    calendarModeratorPill: {
+      backgroundColor: surface2,
+      borderWidth: 1,
+      borderColor: border,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
 
-calendarModeratorPillText: {
-  color: text,
-  fontWeight: '700',
-},
+    calendarModeratorPillActive: {
+      backgroundColor: primary,
+      borderColor: primary,
+    },
 
-calendarModeratorPillTextActive: {
-  color: surface2,
-},
+    calendarModeratorPillText: {
+      color: text,
+      fontWeight: '700',
+    },
 
-calendarModeratorHelper: {
-  marginTop: 8,
-  color: muted,
-  fontSize: 13,
-  fontWeight: '600',
-},
+    calendarModeratorPillTextActive: {
+      color: surface2,
+    },
 
-calendarReadOnlyCard: {
-  backgroundColor: surface,
-  borderRadius: 20,
-  borderWidth: 1,
-  borderColor: border,
-  padding: 18,
-  marginBottom: 18,
-},
+    calendarModeratorHelper: {
+      marginTop: 8,
+      color: muted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
 
-calendarReadOnlyTitle: {
-  fontSize: 15,
-  fontWeight: '900',
-  color: text,
-},
+    calendarReadOnlyCard: {
+      backgroundColor: surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: border,
+      padding: 18,
+      marginBottom: 18,
+    },
 
-calendarReadOnlySub: {
-  marginTop: 6,
-  fontSize: 12,
-  fontWeight: '700',
-  color: muted,
-  lineHeight: 18,
-},
+    calendarReadOnlyTitle: {
+      fontSize: 15,
+      fontWeight: '900',
+      color: text,
+    },
+
+    calendarReadOnlySub: {
+      marginTop: 6,
+      fontSize: 12,
+      fontWeight: '700',
+      color: muted,
+      lineHeight: 18,
+    },
   });
 }

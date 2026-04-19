@@ -16,6 +16,7 @@ import { useAppTheme } from '../../src/theme/ThemeProvider';
 const PAGE_SIZE = 20;
 
 type ThemeStatusStyle = { bg: string; text: string; border: string };
+type UserDirectoryStatus = 'ACTIVE' | 'PENDING' | 'DRAFT';
 
 function formatDateOnly(value?: string | null) {
   if (!value) return '—';
@@ -61,14 +62,9 @@ export default function UserManagementScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, currentPage]);
 
-  /**
-   * 🚀 CACHE-PROOF USER FETCH
-   * Manual join to bypass schema link errors.
-   */
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      // 1. Fetch Profiles first
       let profRequest = supabase.from('profiles').select('*', { count: 'exact' });
       if (query) profRequest = profRequest.or(`full_name.ilike.%${query}%,email.ilike.%${query}%`);
 
@@ -79,14 +75,12 @@ export default function UserManagementScreen() {
 
       if (profError) throw profError;
 
-      // 2. Fetch Roles manually
       const userIds = profs?.map((p) => p.id) || [];
       const { data: roles } = await supabase
         .from('user_roles')
         .select('user_id, role')
         .in('user_id', userIds);
 
-      // 3. Merge
       const merged =
         profs?.map((p) => ({
           ...p,
@@ -96,7 +90,6 @@ export default function UserManagementScreen() {
       setUsers(merged);
       setTotalCount(count || 0);
     } catch (err: any) {
-      // keep behavior same, just log
       // eslint-disable-next-line no-console
       console.error('Manual Directory Sync Error:', err?.message || err);
     } finally {
@@ -104,26 +97,42 @@ export default function UserManagementScreen() {
     }
   };
 
-  const getStatusStyle = (approved: boolean): ThemeStatusStyle => {
-    // Use theme-safe tints (no hardcoded green/red)
-    // Keep it simple: use surface/input + semantic text colors
-    if (approved) {
-      return {
-        bg: theme.colors.success + '14', // light tint
-        text: theme.colors.success,
-        border: theme.colors.success + '33',
-      };
+  const getUserStatus = (item: any): UserDirectoryStatus => {
+    const isSubmitted = Boolean(item.is_submitted);
+    const isApproved = Boolean(item.is_approved);
+
+    if (!isSubmitted) return 'DRAFT';
+    if (isApproved) return 'ACTIVE';
+    return 'PENDING';
+  };
+
+  const getStatusStyle = (status: UserDirectoryStatus): ThemeStatusStyle => {
+    switch (status) {
+      case 'ACTIVE':
+        return {
+          bg: theme.colors.success + '14',
+          text: theme.colors.success,
+          border: theme.colors.success + '33',
+        };
+      case 'DRAFT':
+        return {
+          bg: theme.colors.mutedText + '12',
+          text: theme.colors.mutedText,
+          border: theme.colors.mutedText + '33',
+        };
+      case 'PENDING':
+      default:
+        return {
+          bg: theme.colors.danger + '12',
+          text: theme.colors.danger,
+          border: theme.colors.danger + '33',
+        };
     }
-    return {
-      bg: theme.colors.danger + '12',
-      text: theme.colors.danger,
-      border: theme.colors.danger + '33',
-    };
   };
 
   const renderRow = ({ item, index }: any) => {
-    const approved = Boolean(item.is_approved);
-    const status = getStatusStyle(approved);
+    const statusLabel = getUserStatus(item);
+    const status = getStatusStyle(statusLabel);
     const lastLoginDate = formatDateOnly(item.last_login_at);
     const lastLoginAgo = formatDaysAgo(item.last_login_at);
 
@@ -143,9 +152,14 @@ export default function UserManagementScreen() {
         </View>
 
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <View style={[styles.statusPill, { backgroundColor: status.bg, borderColor: status.border }]}>
+          <View
+            style={[
+              styles.statusPill,
+              { backgroundColor: status.bg, borderColor: status.border },
+            ]}
+          >
             <Text style={[styles.statusText, { color: status.text }]}>
-              {approved ? 'ACTIVE' : 'PENDING'}
+              {statusLabel}
             </Text>
           </View>
         </View>
@@ -183,7 +197,7 @@ export default function UserManagementScreen() {
             placeholderTextColor={theme.colors.mutedText}
             value={query}
             onChangeText={(t) => {
-              setCurrentPage(0); // nicer UX: reset paging on new search
+              setCurrentPage(0);
               setQuery(t);
             }}
             autoCapitalize="none"

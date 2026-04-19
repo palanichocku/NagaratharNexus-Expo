@@ -1,3 +1,4 @@
+// ./app/(admin)/Analytics.tsx
 import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
@@ -18,12 +19,59 @@ import { useAppTheme } from '../../src/theme/ThemeProvider';
 const fullScreenWidth =
   Dimensions.get('window').width - (Platform.OS === 'web' ? 120 : 40);
 
+type AnalyticsData = {
+  totalUsers?: number;
+  staffCount?: number;
+  draftProfiles?: number;
+  pendingApprovals?: number;
+  approvedActiveProfiles?: number;
+  accountInactiveProfiles?: number;
+  inactiveMembers?: number;
+  inactiveUsers?: any[];
+  inactiveThresholdDays?: number;
+  activeLast7Days?: number;
+  activeLast30Days?: number;
+  neverLoggedIn?: number;
+  newThisMonth?: number;
+  profilesWithPhoto?: number;
+  profilesWithProfession?: number;
+  profilesWithExpectations?: number;
+  profilesWithEducation?: number;
+  profilePhotoCompletionRate?: number;
+  professionCompletionRate?: number;
+  expectationsCompletionRate?: number;
+  educationCompletionRate?: number;
+  openReports?: number;
+  countries?: Record<string, number>;
+  ageGroups?: Record<string, number>;
+  education?: Record<string, number>;
+  gender?: Record<string, number>;
+  maritalStatus?: Record<string, number>;
+  roles?: Record<string, number>;
+  kovils?: Record<string, number>;
+  nativePlaces?: Record<string, number>;
+};
+
+type PieDatum = {
+  name: string;
+  population: number;
+  color: string;
+  legendFontColor: string;
+  legendFontSize: number;
+};
+
+type MetricItem = {
+  label: string;
+  value: number;
+  helper?: string;
+};
+
 export default function AnalyticsScreen() {
   const { theme } = useAppTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<AnalyticsData | null>(null);
 
   useEffect(() => {
     void loadAnalytics();
@@ -38,11 +86,8 @@ export default function AnalyticsScreen() {
       ]);
 
       setData({
-        ...distData,
-        inactiveUsers: summaryData?.inactiveUsers || [],
-        inactiveThresholdDays: summaryData?.inactiveThresholdDays || 30,
-        totalUsers: summaryData?.totalUsers || 0,
-        pendingApprovals: summaryData?.pendingApprovals || 0,
+        ...(distData || {}),
+        ...(summaryData || {}),
       });
     } finally {
       setLoading(false);
@@ -51,93 +96,150 @@ export default function AnalyticsScreen() {
 
   const getChartWidth = (itemCount: number) => {
     if (itemCount <= 10) return Math.max(350, itemCount * 75);
-    return Math.max(fullScreenWidth, itemCount * 50);
+    return Math.max(fullScreenWidth, itemCount * 52);
   };
 
-  const chartConfig = useMemo(() => {
-    return {
-      backgroundColor: theme.colors.surface2,
-      backgroundGradientFrom: theme.colors.surface2,
-      backgroundGradientTo: theme.colors.surface2,
-      decimalPlaces: 0,
-      color: (opacity = 1) => rgba(theme.colors.text, opacity),
-      labelColor: (opacity = 1) => rgba(theme.colors.mutedText, opacity),
-      barPercentage: 0.8,
-      propsForLabels: { fontSize: 9, fontWeight: '700' as any },
-      fillShadowGradient: theme.colors.primary,
-      fillShadowGradientOpacity: 1,
-    };
-  }, [
-    theme.colors.mutedText,
-    theme.colors.primary,
-    theme.colors.surface2,
-    theme.colors.text,
-  ]);
+  const chartConfig = useMemo(
+    () =>
+      ({
+        backgroundColor: theme.colors.surface2,
+        backgroundGradientFrom: theme.colors.surface2,
+        backgroundGradientTo: theme.colors.surface2,
+        decimalPlaces: 0,
+        color: (opacity = 1) => rgba(theme.colors.text, opacity),
+        labelColor: (opacity = 1) => rgba(theme.colors.mutedText, opacity),
+        barPercentage: 0.78,
+        propsForLabels: { fontSize: 9, fontWeight: '700' as any },
+        fillShadowGradient: theme.colors.primary,
+        fillShadowGradientOpacity: 1,
+      }) as any,
+    [
+      theme.colors.mutedText,
+      theme.colors.primary,
+      theme.colors.surface2,
+      theme.colors.text,
+    ]
+  );
 
-  const formatPieData = (obj: any) => {
+  const formatPieData = (obj: Record<string, number> | undefined | null): PieDatum[] => {
     const palette = buildChartPalette(
       theme.colors.primary,
       theme.colors.success,
       theme.colors.danger,
-      theme.colors.text,
+      theme.colors.text
     );
 
-    return Object.keys(obj || {}).map((key, idx) => ({
+    const entries = Object.entries(obj || {}).filter(([, value]) => Number(value || 0) > 0);
+
+    return entries.map(([key, value], idx) => ({
       name: key,
-      population: obj[key],
+      population: Number(value || 0),
       color: palette[idx % palette.length],
       legendFontColor: theme.colors.mutedText,
       legendFontSize: 12,
     }));
   };
 
-  const getTopData = (obj: any, limit = 15) => {
+  const getTopData = (obj: Record<string, number> | undefined | null, limit = 15) => {
     const sorted = Object.entries(obj || {})
-      .sort(([, a]: any, [, b]: any) => (b as number) - (a as number))
+      .sort(([, a], [, b]) => Number(b || 0) - Number(a || 0))
       .slice(0, limit);
 
     return {
       labels: sorted.map(([label]) => label),
-      datasets: [{ data: sorted.map(([, val]) => val as number) }],
+      datasets: [{ data: sorted.map(([, val]) => Number(val || 0)) }],
     };
   };
 
-  const kpis = useMemo(() => {
+  const summaryCards = useMemo(() => {
     if (!data) return [];
-
-    const roles = data.roles || {};
-    const adminCount = Number(roles.ADMIN || 0);
-    const moderatorCount = Number(roles.MODERATOR || 0);
-    const staffCount = adminCount + moderatorCount;
-    const systemAccounts = Object.values(roles).reduce(
-      (sum: number, value: any) => sum + Number(value || 0),
-      0
-    );
 
     return [
       {
         label: 'Total Members',
         value: Number(data.totalUsers || 0),
-        helper: 'Submitted member profiles only',
-        icon: 'people-outline' as any,
+        helper: 'All non-staff profiles in system',
+        icon: 'people-outline' as const,
       },
       {
-        label: 'Staff Accounts',
-        value: staffCount,
+        label: 'Staff',
+        value: Number(data.staffCount || 0),
         helper: 'Admins and moderators',
-        icon: 'shield-outline' as any,
+        icon: 'shield-checkmark-outline' as const,
       },
       {
-        label: 'System Accounts',
-        value: systemAccounts,
-        helper: 'All roles combined',
-        icon: 'layers-outline' as any,
+        label: 'Approved Active',
+        value: Number(data.approvedActiveProfiles || 0),
+        helper: 'Members available in search pool',
+        icon: 'checkmark-circle-outline' as const,
       },
       {
-        label: 'Pending Approvals',
-        value: Number(data.pendingApprovals || 0),
-        helper: 'Members awaiting review',
-        icon: 'time-outline' as any,
+        label: 'New This Month',
+        value: Number(data.newThisMonth || 0),
+        helper: 'Profiles created this month',
+        icon: 'sparkles-outline' as const,
+      },
+      {
+        label: 'Open Reports',
+        value: Number(data.openReports || 0),
+        helper: 'Safety items needing review',
+        icon: 'shield-outline' as const,
+      },
+      {
+        label: 'Inactive Members',
+        value: Number(data.inactiveMembers || 0),
+        helper: `${Number(data.inactiveThresholdDays || 30)}+ days since login`,
+        icon: 'pause-circle-outline' as const,
+      },
+    ];
+  }, [data]);
+
+  const lifecycleCards = useMemo<MetricItem[]>(() => {
+    if (!data) return [];
+    return [
+      { label: 'Total Members', value: Number(data.totalUsers || 0) },
+      { label: 'Draft', value: Number(data.draftProfiles || 0) },
+      { label: 'Pending Approval', value: Number(data.pendingApprovals || 0) },
+      { label: 'Approved Active', value: Number(data.approvedActiveProfiles || 0) },
+      { label: 'Inactive Status', value: Number(data.accountInactiveProfiles || 0) },
+    ];
+  }, [data]);
+
+  const engagementCards = useMemo<MetricItem[]>(() => {
+    if (!data) return [];
+    return [
+      { label: 'Active Last 7 Days', value: Number(data.activeLast7Days || 0) },
+      { label: 'Active Last 30 Days', value: Number(data.activeLast30Days || 0) },
+      { label: 'Never Logged In', value: Number(data.neverLoggedIn || 0) },
+      {
+        label: `${Number(data.inactiveThresholdDays || 30)}+ Days Inactive`,
+        value: Number(data.inactiveMembers || 0),
+      },
+    ];
+  }, [data]);
+
+  const qualityCards = useMemo<MetricItem[]>(() => {
+    if (!data) return [];
+    return [
+      {
+        label: 'With Photo',
+        value: Number(data.profilesWithPhoto || 0),
+        helper: `${Number(data.profilePhotoCompletionRate || 0)}%`,
+      },
+      {
+        label: 'With Education',
+        value: Number(data.profilesWithEducation || 0),
+        helper: `${Number(data.educationCompletionRate || 0)}%`,
+      },
+      {
+        label: 'With Profession',
+        value: Number(data.profilesWithProfession || 0),
+        helper: `${Number(data.professionCompletionRate || 0)}%`,
+      },
+      {
+        label: 'With Expectations',
+        value: Number(data.profilesWithExpectations || 0),
+        helper: `${Number(data.expectationsCompletionRate || 0)}%`,
       },
     ];
   }, [data]);
@@ -151,14 +253,20 @@ export default function AnalyticsScreen() {
     );
   }
 
-  const AnalyticsCard = ({ title, subtitle, icon, children }: any) => (
+  const AnalyticsCard = ({
+    title,
+    subtitle,
+    icon,
+    children,
+  }: {
+    title: string;
+    subtitle?: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    children: React.ReactNode;
+  }) => (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
-        <Ionicons
-          name={icon}
-          size={18}
-          color={theme.colors.text}
-        />
+        <Ionicons name={icon} size={18} color={theme.colors.text} />
         <View style={{ flex: 1 }}>
           <Text style={styles.cardTitle}>{title}</Text>
           {!!subtitle && <Text style={styles.cardSubtitle}>{subtitle}</Text>}
@@ -168,8 +276,22 @@ export default function AnalyticsScreen() {
     </View>
   );
 
-  const ChartFrame = ({ children }: any) => (
+  const ChartFrame = ({ children }: { children: React.ReactNode }) => (
     <View style={styles.chartFrame}>{children}</View>
+  );
+
+  const MetricGrid = ({ items }: { items: MetricItem[] }) => (
+    <View style={styles.metricGrid}>
+      {items.map((item, idx) => (
+        <View key={`${item.label}-${idx}`} style={styles.metricTile}>
+          <Text style={styles.metricValue}>
+            {Number(item.value || 0).toLocaleString()}
+          </Text>
+          <Text style={styles.metricLabel}>{item.label}</Text>
+          {!!item.helper && <Text style={styles.metricHelper}>{item.helper}</Text>}
+        </View>
+      ))}
+    </View>
   );
 
   return (
@@ -179,7 +301,7 @@ export default function AnalyticsScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>System Analytics</Text>
             <Text style={styles.subtitle}>
-              Member insights and staff account breakdown
+              Member lifecycle, quality, engagement, and moderation signals without duplicate buckets
             </Text>
           </View>
 
@@ -202,59 +324,105 @@ export default function AnalyticsScreen() {
             color={theme.colors.mutedText}
           />
           <Text style={styles.infoBannerText}>
-            Member charts below exclude staff accounts. The roles chart includes all
-            system accounts, including admins and moderators.
+            Member analytics count non-staff profiles only. System roles stay separate so operational numbers reflect the real member pool.
           </Text>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.kpiRow}
-        >
-          {kpis.map((k, idx) => (
+        <Text style={styles.rowTitle}>At a Glance</Text>
+        <View style={styles.kpiRow}>
+          {summaryCards.map((k, idx) => (
             <View key={idx} style={styles.kpiChip}>
-              <Ionicons
-                name={k.icon}
-                size={16}
-                color={theme.colors.text}
-              />
-              <View style={{ flex: 1 }}>
+              <Ionicons name={k.icon} size={16} color={theme.colors.text} />
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={styles.kpiValue}>{Number(k.value || 0).toLocaleString()}</Text>
                 <Text style={styles.kpiLabel}>{k.label}</Text>
                 <Text style={styles.kpiHelper}>{k.helper}</Text>
               </View>
             </View>
           ))}
-        </ScrollView>
+        </View>
 
         <AnalyticsCard
-          title="Gender Distribution"
-          subtitle="Approved and submitted member profiles only"
-          icon="male-female-outline"
+          title="Member Lifecycle"
+          subtitle="One clean funnel from draft to approved pool"
+          icon="git-network-outline"
         >
-          <ChartFrame>
-            <PieChart
-              data={formatPieData(data?.gender)}
-              width={fullScreenWidth}
-              height={220}
-              chartConfig={chartConfig}
-              accessor="population"
-              backgroundColor="transparent"
-              absolute
-            />
-          </ChartFrame>
+          <MetricGrid items={lifecycleCards} />
         </AnalyticsCard>
 
         <AnalyticsCard
+          title="Engagement"
+          subtitle="Recent activity and dormant-member signals"
+          icon="pulse-outline"
+        >
+          <MetricGrid items={engagementCards} />
+        </AnalyticsCard>
+
+        <AnalyticsCard
+          title="Profile Quality"
+          subtitle="How complete the approved active pool looks"
+          icon="ribbon-outline"
+        >
+          <MetricGrid items={qualityCards} />
+        </AnalyticsCard>
+
+      <AnalyticsCard
+        title="Population Mix"
+        subtitle="Approved active member profiles only"
+        icon="pie-chart-outline"
+      >
+        <View style={styles.twoColGrid}>
+          <View style={styles.mixCard}>
+            <Text style={styles.subSectionTitle}>Gender Distribution</Text>
+            <ChartFrame>
+              {formatPieData(data?.gender).length ? (
+                <PieChart
+                  data={formatPieData(data?.gender) as any}
+                  width={Platform.OS === 'web' ? 420 : fullScreenWidth - 24}
+                  height={220}
+                  chartConfig={chartConfig}
+                  accessor="population"
+                  backgroundColor="transparent"
+                  paddingLeft="12"
+                  absolute
+                />
+              ) : (
+                <Text style={styles.emptyText}>No gender data available.</Text>
+              )}
+            </ChartFrame>
+          </View>
+
+          <View style={styles.mixCard}>
+            <Text style={styles.subSectionTitle}>Marital Status</Text>
+            <ChartFrame>
+              {formatPieData(data?.maritalStatus).length ? (
+                <PieChart
+                  data={formatPieData(data?.maritalStatus) as any}
+                  width={Platform.OS === 'web' ? 420 : fullScreenWidth - 24}
+                  height={220}
+                  chartConfig={chartConfig}
+                  accessor="population"
+                  backgroundColor="transparent"
+                  paddingLeft="12"
+                  absolute
+                />
+              ) : (
+                <Text style={styles.emptyText}>No marital status data available.</Text>
+              )}
+            </ChartFrame>
+          </View>
+        </View>
+      </AnalyticsCard>
+
+        <AnalyticsCard
           title="Top 15 Native Places"
-          subtitle="Approved and submitted member profiles only"
+          subtitle="Approved active member profiles only"
           icon="home-outline"
         >
           <ChartFrame>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <BarChart
-                data={getTopData(data?.nativePlaces, 15)}
+                data={getTopData(data?.nativePlaces, 15) as any}
                 width={getChartWidth(15)}
                 height={260}
                 chartConfig={chartConfig}
@@ -263,26 +431,34 @@ export default function AnalyticsScreen() {
                 withHorizontalLabels={false}
                 withInnerLines={false}
                 verticalLabelRotation={30}
+                yAxisLabel=""
+                yAxisSuffix=""
               />
             </ScrollView>
           </ChartFrame>
         </AnalyticsCard>
 
         <AnalyticsCard
-          title="System Roles"
-          subtitle="All staff and member accounts from user_roles"
-          icon="shield-checkmark-outline"
+          title="Top 15 Education Levels"
+          subtitle="Approved active member profiles only"
+          icon="school-outline"
         >
           <ChartFrame>
-            <PieChart
-              data={formatPieData(data?.roles)}
-              width={fullScreenWidth}
-              height={220}
-              chartConfig={chartConfig}
-              accessor="population"
-              backgroundColor="transparent"
-              absolute
-            />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <BarChart
+                data={getTopData(data?.education, 15) as any}
+                width={getChartWidth(15)}
+                height={260}
+                chartConfig={chartConfig}
+                fromZero
+                showValuesOnTopOfBars
+                withHorizontalLabels={false}
+                withInnerLines={false}
+                verticalLabelRotation={30}
+                yAxisLabel=""
+                yAxisSuffix=""
+              />
+            </ScrollView>
           </ChartFrame>
         </AnalyticsCard>
 
@@ -318,28 +494,6 @@ export default function AnalyticsScreen() {
             )}
           </View>
         </AnalyticsCard>
-
-        <AnalyticsCard
-          title="Top 15 Education Levels"
-          subtitle="Approved and submitted member profiles only"
-          icon="school-outline"
-        >
-          <ChartFrame>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <BarChart
-                data={getTopData(data?.education, 15)}
-                width={getChartWidth(15)}
-                height={260}
-                chartConfig={chartConfig}
-                fromZero
-                showValuesOnTopOfBars
-                withHorizontalLabels={false}
-                withInnerLines={false}
-                verticalLabelRotation={30}
-              />
-            </ScrollView>
-          </ChartFrame>
-        </AnalyticsCard>
       </ScrollView>
     </View>
   );
@@ -355,6 +509,7 @@ function makeStyles(theme: any) {
     content: {
       padding: s.lg,
       paddingLeft: Platform.OS === 'web' ? 100 : s.lg,
+      paddingBottom: s.xl,
     },
 
     loadingWrap: {
@@ -389,7 +544,7 @@ function makeStyles(theme: any) {
       backgroundColor: theme.colors.surface2,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      marginBottom: 10,
+      marginBottom: 12,
     },
     infoBannerText: {
       flex: 1,
@@ -412,9 +567,24 @@ function makeStyles(theme: any) {
     },
     refreshText: { fontWeight: '900', color: theme.colors.text },
 
-    kpiRow: { paddingVertical: 8, gap: 10, marginBottom: 6 },
+    rowTitle: {
+      marginTop: 6,
+      marginBottom: 6,
+      fontSize: 12,
+      fontWeight: '900',
+      color: theme.colors.mutedText,
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+
+    kpiRow: {
+      paddingVertical: 8,
+      gap: 10,
+      marginBottom: 4,
+      flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+      flexWrap: Platform.OS === 'web' ? 'wrap' : 'nowrap',
+    },
     kpiChip: {
-      width: 220,
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 10,
@@ -423,6 +593,11 @@ function makeStyles(theme: any) {
       borderColor: theme.colors.border,
       borderRadius: r.card,
       padding: 12,
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: Platform.OS === 'web' ? 220 : '100%',
+      minWidth: Platform.OS === 'web' ? 180 : 0,
+      maxWidth: Platform.OS === 'web' ? 280 : '100%',
     },
     kpiValue: { fontSize: 16, fontWeight: '900', color: theme.colors.text },
     kpiLabel: { fontSize: 11, fontWeight: '800', color: theme.colors.mutedText },
@@ -463,6 +638,55 @@ function makeStyles(theme: any) {
       backgroundColor: theme.colors.surface2,
       padding: 10,
       overflow: 'hidden',
+    },
+
+    metricGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    metricTile: {
+      minWidth: 150,
+      flexGrow: 1,
+      flexBasis: Platform.OS === 'web' ? '18%' : '45%',
+      borderRadius: r.card,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface2,
+      padding: 14,
+    },
+    metricValue: {
+      fontSize: 20,
+      fontWeight: '900',
+      color: theme.colors.text,
+    },
+    metricLabel: {
+      marginTop: 6,
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.mutedText,
+    },
+    metricHelper: {
+      marginTop: 4,
+      fontSize: 11,
+      fontWeight: '600',
+      color: theme.colors.mutedText,
+    },
+
+    twoColGrid: {
+      flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+      gap: 12,
+    },
+    mixCard: {
+      flex: 1,
+      minWidth: Platform.OS === 'web' ? 0 : 0,
+    },
+
+    subSectionTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: theme.colors.text,
+      marginBottom: 8,
     },
 
     inactiveList: {

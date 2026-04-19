@@ -9,7 +9,7 @@ export const DEBUG_CONFIG = {
 };
 
 export const USER_FLAG_REASONS = [
-  { id: 'photos', label: 'Inappropriate Photos', icon: 'image-outline' },
+  { id: 'photos', label: 'Inappropriate Photo', icon: 'image-outline' },
   { id: 'fake', label: 'Fake Profile', icon: 'person-remove-outline' },
   { id: 'data', label: 'Inaccurate Biodata', icon: 'document-text-outline' },
 ];

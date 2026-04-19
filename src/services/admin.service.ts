@@ -26,12 +26,9 @@ const pickMany = (arr: any[] | undefined, count: number) => {
 
 // Robust picker for kovil/pirivu objects
 const pickKovil = () => {
-  // 1. Pick any kovil from the full list
   const kovil = AppData.KOVIL_DATA[Math.floor(Math.random() * AppData.KOVIL_DATA.length)];
-  
-  // 2. Check if this kovil has pirivus; if not, default to 'None'
-  const pirivu = (kovil.pirivus && kovil.pirivus.length > 0) 
-    ? kovil.pirivus[Math.floor(Math.random() * kovil.pirivus.length)] 
+  const pirivu = (kovil.pirivus && kovil.pirivus.length > 0)
+    ? kovil.pirivus[Math.floor(Math.random() * kovil.pirivus.length)]
     : 'None';
 
   return { kovil: kovil.value, pirivu };
@@ -44,7 +41,6 @@ const getRandomDate = (start: Date, end: Date) => {
 
 /**
  * ✅ FIX: Generates a RFC4122 version 4 compliant UUID
- * This ensures the database accepts the ID for the profiles table.
  */
 const generateValidUUID = () => {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -70,219 +66,380 @@ export type SuccessStory = {
   updated_at: string;
 };
 
-export const adminService = {
+type RoleRow = {
+  user_id: string;
+  role: string | null;
+};
 
+type AnalyticsProfileRow = {
+  id: string;
+  full_name?: string | null;
+  email?: string | null;
+  created_at?: string | null;
+  last_login_at?: string | null;
+  is_submitted?: boolean | null;
+  is_approved?: boolean | null;
+  account_status?: string | null;
+  profile_photo_url?: string | null;
+  profession?: string | null;
+  expectations?: string | null;
+  education_history?: any[] | null;
+  resident_country?: string | null;
+  age?: number | string | null;
+  gender?: string | null;
+  marital_status?: string | null;
+  kovil?: string | null;
+  native_place?: string | null;
+};
 
-  async listSuccessStories() {
-  const { data, error } = await supabase
-    .from('success_stories')
-    .select('*')
-    .order('is_featured', { ascending: false })
-    .order('sort_order', { ascending: true })
-    .order('wedding_date', { ascending: false })
-    .order('created_at', { ascending: false });
+export type PendingProfileCursor = {
+  created_at: string;
+  id: string;
+};
 
-  if (error) throw error;
-  return data ?? [];
-},
+export type PendingProfilesPage = {
+  items: any[];
+  nextCursor: PendingProfileCursor | null;
+  hasMore: boolean;
+};
 
-async createSuccessStory(payload: {
-  title: string;
-  wedding_date?: string | null;
-  short_description?: string | null;
-  feedback?: string | null;
-  photo_url?: string | null;
-  photo_path?: string | null;
-  consent_confirmed?: boolean;
-  is_published?: boolean;
-  is_featured?: boolean;
-  sort_order?: number;
-}) {
-  const { data: auth } = await supabase.auth.getUser();
-  const userId = auth.user?.id ?? null;
+async function fetchAllPaged<T>(
+  table: string,
+  selectClause: string,
+  pageSize: number = 1000,
+  queryBuilder?: (query: any) => any,
+  orderBy?: { column: string; ascending?: boolean }
+): Promise<T[]> {
+  const allRows: T[] = [];
+  let from = 0;
 
-  const { data, error } = await supabase
-    .from('success_stories')
-    .insert({
-      ...payload,
-      created_by: userId,
-      updated_by: userId,
-    })
-    .select()
-    .single();
+  while (true) {
+    let query = supabase.from(table).select(selectClause);
 
-  if (error) throw error;
-  return data;
-},
+    if (queryBuilder) {
+      query = queryBuilder(query);
+    }
 
-async updateSuccessStory(
-  id: string,
-  payload: Partial<{
-    title: string;
-    wedding_date: string | null;
-    short_description: string | null;
-    feedback: string | null;
-    photo_url: string | null;
-    photo_path: string | null;
-    consent_confirmed: boolean;
-    is_published: boolean;
-    is_featured: boolean;
-    sort_order: number;
-  }>
-) {
-  const { data: auth } = await supabase.auth.getUser();
-  const userId = auth.user?.id ?? null;
+    if (orderBy?.column) {
+      query = query.order(orderBy.column, { ascending: orderBy.ascending ?? true });
+    }
 
-  const { data, error } = await supabase
-    .from('success_stories')
-    .update({
-      ...payload,
-      updated_by: userId,
-    })
-    .eq('id', id)
-    .select()
-    .single();
+    const { data, error } = await query.range(from, from + pageSize - 1);
 
-  if (error) throw error;
-  return data;
-},
+    if (error) throw error;
 
-async deleteSuccessStory(id: string) {
-  const { error } = await supabase
-    .from('success_stories')
-    .delete()
-    .eq('id', id);
+    const rows = (data ?? []) as T[];
+    allRows.push(...rows);
 
-  if (error) throw error;
-},
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
 
-async setSuccessStoryPublished(id: string, isPublished: boolean) {
-  return this.updateSuccessStory(id, { is_published: isPublished });
-},
+  return allRows;
+}
 
-async setSuccessStoryFeatured(id: string, isFeatured: boolean) {
-  return this.updateSuccessStory(id, { is_featured: isFeatured });
-},
-  // --- 1. GLOBAL SYSTEM CONFIGURATION ---
-async getSystemConfig() {
-  try {
+async function fetchAllAnalyticsProfiles(): Promise<AnalyticsProfileRow[]> {
+  return fetchAllPaged<AnalyticsProfileRow>(
+    'profiles',
+    `
+      id,
+      full_name,
+      email,
+      created_at,
+      last_login_at,
+      is_submitted,
+      is_approved,
+      account_status,
+      profile_photo_url,
+      profession,
+      expectations,
+      education_history,
+      resident_country,
+      age,
+      gender,
+      kovil,
+      native_place
+    `
+  );
+}
+
+async function fetchAllApprovedSubmittedProfilesForDistribution(): Promise<AnalyticsProfileRow[]> {
+  return fetchAllPaged<AnalyticsProfileRow>(
+    'profiles',
+    `
+      id,
+      resident_country,
+      age,
+      gender,
+      marital_status,
+      kovil,
+      native_place,
+      education_history,
+      is_submitted,
+      is_approved
+    `,
+    1000,
+    (query) => query.eq('is_submitted', true).eq('is_approved', true)
+  );
+}
+
+async function fetchAllUserRoles(): Promise<RoleRow[]> {
+  return fetchAllPaged<RoleRow>('user_roles', 'user_id, role');
+}
+
+async function fetchAllProfilesBasic(): Promise<any[]> {
+  return fetchAllPaged<any>(
+    'profiles',
+    '*',
+    1000,
+    undefined,
+    { column: 'full_name', ascending: true }
+  );
+}
+
+async function fetchAllPendingProfilesBasic(): Promise<any[]> {
+  return fetchAllPaged<any>(
+    'profiles',
+    '*',
+    1000,
+    (query) => query.eq('is_approved', false).eq('is_submitted', true)
+  );
+}
+
+async function fetchUserRolesByIds(userIds: string[]) {
+  const roleMap = new Map<string, string>();
+
+  for (let i = 0; i < userIds.length; i += 500) {
+    const chunk = userIds.slice(i, i + 500);
+
     const { data, error } = await supabase
+      .from('user_roles')
+      .select('user_id, role')
+      .in('user_id', chunk);
+
+    if (error) throw error;
+
+    (data ?? []).forEach((row: any) => {
+      roleMap.set(String(row.user_id), String(row.role || 'USER').toUpperCase().trim());
+    });
+  }
+
+  return roleMap;
+}
+
+// --- MAIN SERVICE OBJECT ---
+export const adminService = {
+  async listSuccessStories() {
+    const { data, error } = await supabase
+      .from('success_stories')
+      .select('*')
+      .order('is_featured', { ascending: false })
+      .order('sort_order', { ascending: true })
+      .order('wedding_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  async createSuccessStory(payload: {
+    title: string;
+    wedding_date?: string | null;
+    short_description?: string | null;
+    feedback?: string | null;
+    photo_url?: string | null;
+    photo_path?: string | null;
+    consent_confirmed?: boolean;
+    is_published?: boolean;
+    is_featured?: boolean;
+    sort_order?: number;
+  }) {
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id ?? null;
+
+    const { data, error } = await supabase
+      .from('success_stories')
+      .insert({
+        ...payload,
+        created_by: userId,
+        updated_by: userId,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async updateSuccessStory(
+    id: string,
+    payload: Partial<{
+      title: string;
+      wedding_date: string | null;
+      short_description: string | null;
+      feedback: string | null;
+      photo_url: string | null;
+      photo_path: string | null;
+      consent_confirmed: boolean;
+      is_published: boolean;
+      is_featured: boolean;
+      sort_order: number;
+    }>
+  ) {
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id ?? null;
+
+    const { data, error } = await supabase
+      .from('success_stories')
+      .update({
+        ...payload,
+        updated_by: userId,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async deleteSuccessStory(id: string) {
+    const { error } = await supabase
+      .from('success_stories')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  },
+
+  async setSuccessStoryPublished(id: string, isPublished: boolean) {
+    return this.updateSuccessStory(id, { is_published: isPublished });
+  },
+
+  async setSuccessStoryFeatured(id: string, isFeatured: boolean) {
+    return this.updateSuccessStory(id, { is_featured: isFeatured });
+  },
+
+  // --- 1. GLOBAL SYSTEM CONFIGURATION ---
+  async getSystemConfig() {
+    try {
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'global_config')
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const cfg = (data?.value ?? {}) as any;
+
+      return {
+        maintenanceMode: !!cfg.maintenanceMode,
+        allowRegistration:
+          typeof cfg.allowRegistration === 'boolean'
+            ? cfg.allowRegistration
+            : typeof cfg.registrationEnabled === 'boolean'
+              ? cfg.registrationEnabled
+              : true,
+        requireApproval:
+          typeof cfg.requireApproval === 'boolean'
+            ? cfg.requireApproval
+            : typeof cfg.requireApprovalForSearch === 'boolean'
+              ? cfg.requireApprovalForSearch
+              : true,
+        autoPauseThreshold: String(
+          cfg.autoPauseThreshold ?? cfg.autoFlagThreshold ?? 3
+        ),
+        favoritesLimit: String(cfg.favoritesLimit ?? 5),
+        inactiveUserThresholdDays: String(cfg.inactiveUserThresholdDays ?? 30),
+        welcomeMessage: String(cfg.welcomeMessage ?? ''),
+        themeName: String(cfg.themeName ?? 'warm'),
+      };
+    } catch (err) {
+      console.error('Config fetch failed, using defaults:', err);
+      return {
+        maintenanceMode: false,
+        allowRegistration: true,
+        requireApproval: true,
+        autoPauseThreshold: '3',
+        favoritesLimit: '5',
+        inactiveUserThresholdDays: '30',
+        welcomeMessage: '',
+        themeName: 'warm',
+      };
+    }
+  },
+
+  async updateSystemConfig(updates: any) {
+    const { data: current, error: readError } = await supabase
       .from('system_settings')
       .select('value')
       .eq('key', 'global_config')
       .maybeSingle();
 
-    if (error) throw error;
+    if (readError) throw readError;
 
-    const cfg = (data?.value ?? {}) as any;
+    const currentValue = (current?.value ?? {}) as any;
 
-    return {
-      maintenanceMode: !!cfg.maintenanceMode,
+    const normalized = {
+      ...currentValue,
+      maintenanceMode: !!updates.maintenanceMode,
       allowRegistration:
-        typeof cfg.allowRegistration === 'boolean'
-          ? cfg.allowRegistration
-          : typeof cfg.registrationEnabled === 'boolean'
-            ? cfg.registrationEnabled
-            : true,
+        typeof updates.allowRegistration === 'boolean'
+          ? updates.allowRegistration
+          : typeof currentValue.allowRegistration === 'boolean'
+            ? currentValue.allowRegistration
+            : typeof currentValue.registrationEnabled === 'boolean'
+              ? currentValue.registrationEnabled
+              : true,
       requireApproval:
-        typeof cfg.requireApproval === 'boolean'
-          ? cfg.requireApproval
-          : typeof cfg.requireApprovalForSearch === 'boolean'
-            ? cfg.requireApprovalForSearch
-            : true,
+        typeof updates.requireApproval === 'boolean'
+          ? updates.requireApproval
+          : typeof currentValue.requireApproval === 'boolean'
+            ? currentValue.requireApproval
+            : typeof currentValue.requireApprovalForSearch === 'boolean'
+              ? currentValue.requireApprovalForSearch
+              : true,
       autoPauseThreshold: String(
-        cfg.autoPauseThreshold ?? cfg.autoFlagThreshold ?? 3
+        updates.autoPauseThreshold ??
+          currentValue.autoPauseThreshold ??
+          currentValue.autoFlagThreshold ??
+          '3'
       ),
-      favoritesLimit: String(cfg.favoritesLimit ?? 5),
-      inactiveUserThresholdDays: String(cfg.inactiveUserThresholdDays ?? 30),
-      welcomeMessage: String(cfg.welcomeMessage ?? ''),
-      themeName: String(cfg.themeName ?? 'warm'),
+      favoritesLimit: String(
+        updates.favoritesLimit ?? currentValue.favoritesLimit ?? '5'
+      ),
+      inactiveUserThresholdDays: String(
+        updates.inactiveUserThresholdDays ??
+          currentValue.inactiveUserThresholdDays ??
+          '30'
+      ),
+      welcomeMessage: String(
+        updates.welcomeMessage ?? currentValue.welcomeMessage ?? ''
+      ),
+      themeName: String(updates.themeName ?? currentValue.themeName ?? 'warm'),
     };
-  } catch (err) {
-    console.error('Config fetch failed, using defaults:', err);
-    return {
-      maintenanceMode: false,
-      allowRegistration: true,
-      requireApproval: true,
-      autoPauseThreshold: '3',
-      favoritesLimit: '5',
-      nactiveUserThresholdDays: '30',
-      welcomeMessage: '',
-      themeName: 'warm',
-    };
-  }
-},
 
-async updateSystemConfig(updates: any) {
-  const { data: current, error: readError } = await supabase
-    .from('system_settings')
-    .select('value')
-    .eq('key', 'global_config')
-    .maybeSingle();
+    delete (normalized as any).registrationEnabled;
+    delete (normalized as any).requireApprovalForSearch;
+    delete (normalized as any).autoFlagThreshold;
 
-  if (readError) throw readError;
+    const { error: upsertError } = await supabase.from('system_settings').upsert({
+      key: 'global_config',
+      value: normalized,
+      updated_at: new Date().toISOString(),
+    });
 
-  const currentValue = (current?.value ?? {}) as any;
+    if (upsertError) throw upsertError;
 
-  const normalized = {
-    ...currentValue,
-    maintenanceMode: !!updates.maintenanceMode,
-    allowRegistration:
-      typeof updates.allowRegistration === 'boolean'
-        ? updates.allowRegistration
-        : typeof currentValue.allowRegistration === 'boolean'
-          ? currentValue.allowRegistration
-          : typeof currentValue.registrationEnabled === 'boolean'
-            ? currentValue.registrationEnabled
-            : true,
-    requireApproval:
-      typeof updates.requireApproval === 'boolean'
-        ? updates.requireApproval
-        : typeof currentValue.requireApproval === 'boolean'
-          ? currentValue.requireApproval
-          : typeof currentValue.requireApprovalForSearch === 'boolean'
-            ? currentValue.requireApprovalForSearch
-            : true,
-    autoPauseThreshold: String(
-      updates.autoPauseThreshold ??
-        currentValue.autoPauseThreshold ??
-        currentValue.autoFlagThreshold ??
-        '3'
-    ),
-    favoritesLimit: String(
-      updates.favoritesLimit ?? currentValue.favoritesLimit ?? '5'
-    ),
-    inactiveUserThresholdDays: String(
-    updates.inactiveUserThresholdDays ??
-      currentValue.inactiveUserThresholdDays ??
-      '30'
-  ),
-    welcomeMessage: String(
-      updates.welcomeMessage ?? currentValue.welcomeMessage ?? ''
-    ),
-    themeName: String(updates.themeName ?? currentValue.themeName ?? 'warm'),
-  };
-
-  delete normalized.registrationEnabled;
-  delete normalized.requireApprovalForSearch;
-  delete normalized.autoFlagThreshold;
-
-  const { error: upsertError } = await supabase.from('system_settings').upsert({
-    key: 'global_config',
-    value: normalized,
-    updated_at: new Date().toISOString(),
-  });
-
-  if (upsertError) throw upsertError;
-
-  await this.logAction(
-    'UPDATE_SYSTEM_CONFIG',
-    `Updated: ${Object.keys(updates).join(', ')}`
-  );
-},
+    await this.logAction(
+      'UPDATE_SYSTEM_CONFIG',
+      `Updated: ${Object.keys(updates).join(', ')}`
+    );
+  },
 
   async executeMassCleanup() {
-    const confirmed = window.confirm("⚠️ DANGER: This will delete all TEST DATA and unsubmitted profiles. Proceed?");
+    const confirmed = window.confirm('⚠️ DANGER: This will delete all TEST DATA and unsubmitted profiles. Proceed?');
     if (!confirmed) return;
 
     try {
@@ -293,15 +450,15 @@ async updateSystemConfig(updates: any) {
 
       if (error) throw error;
       await this.logAction('DATA_WIPE', 'Executed mass cleanup of test/unsubmitted data');
-      window.alert("Cleanup successful.");
+      window.alert('Cleanup successful.');
       return true;
     } catch (error: any) {
-      console.error("❌ Cleanup failed:", error.message);
-      window.alert("Cleanup failed: " + error.message);
+      console.error('❌ Cleanup failed:', error.message);
+      window.alert('Cleanup failed: ' + error.message);
       return false;
     }
   },
-  
+
   async testAuditLogInsert() {
     if (!AUDIT_SETTINGS.enabled || !AUDIT_SETTINGS.levels.PROFILE_APPROVAL) {
       return { success: false, error: 'Audit logging is disabled.' };
@@ -335,17 +492,27 @@ async updateSystemConfig(updates: any) {
       .from('reports')
       .select(`
         *,
-        reporter:profiles!reporter_id(full_name),
-        target:profiles!target_id(full_name)
+        reporter:profiles!reporter_id(full_name,email),
+        target:profiles!target_id(full_name,email,account_status)
       `)
       .order('created_at', { ascending: false });
 
     if (error) return [];
-    return data.map(report => ({
-      ...report,
-      reporterName: report.reporter?.full_name || 'Unknown',
-      targetName: report.target?.full_name || 'Unknown'
-    }));
+
+    return (data ?? [])
+      .filter((report: any) => {
+        const status = String(report?.status || 'PENDING').toUpperCase().trim();
+        const targetStatus = String(report?.target?.account_status || 'ACTIVE').toUpperCase().trim();
+        const isOpen = !status || status === 'PENDING' || status === 'OPEN' || status === 'ACTIVE';
+        return isOpen && targetStatus !== 'INACTIVE';
+      })
+      .map((report: any) => ({
+        ...report,
+        reporterName: report.reporter?.full_name || 'Unknown',
+        reporterEmail: report.reporter?.email || '',
+        targetName: report.target?.full_name || 'Unknown',
+        targetEmail: report.target?.email || '',
+      }));
   },
 
   async logAction(action: keyof typeof AUDIT_SETTINGS.levels, details: string, targetId?: string) {
@@ -373,332 +540,289 @@ async updateSystemConfig(updates: any) {
     }
   },
 
-  // --- 2. USER MANAGEMENT (Manual Join for Cache Resilience) ---
+  // --- 2. USER MANAGEMENT ---
   async getAllUsers() {
     try {
-      // Step 1: Fetch Profiles
-      const { data: profs, error: profError } = await supabase
-        .from('profiles')
-        .select('*')
-        .order('full_name', { ascending: true });
-      
-      if (profError) throw profError;
-      if (!profs) return [];
+      const profs = await fetchAllProfilesBasic();
+      if (!profs.length) return [];
 
-      // Step 2: Fetch Roles manually to bypass 400 schema error
-      const userIds = profs.map(p => p.id);
-      const { data: roles, error: roleError } = await supabase
-        .from('user_roles')
-        .select('user_id, role')
-        .in('user_id', userIds);
+      const userIds = profs.map((p) => p.id);
+      const roleMap = new Map<string, string>();
 
-      // Step 3: Merge
-      return profs.map(u => ({ 
-        ...u, 
-        role: roles?.find(r => r.user_id === u.id)?.role || 'USER' 
+      for (let i = 0; i < userIds.length; i += 1000) {
+        const chunk = userIds.slice(i, i + 1000);
+        const { data: roles, error: roleError } = await supabase
+          .from('user_roles')
+          .select('user_id, role')
+          .in('user_id', chunk);
+
+        if (roleError) throw roleError;
+
+        (roles ?? []).forEach((r: any) => {
+          roleMap.set(String(r.user_id), String(r.role || 'USER'));
+        });
+      }
+
+      return profs.map((u) => ({
+        ...u,
+        role: roleMap.get(String(u.id)) || 'USER',
       }));
     } catch (err) {
-      console.error("getAllUsers Error:", err);
+      console.error('getAllUsers Error:', err);
       return [];
     }
   },
 
   // --- 3. ANALYTICS ---
 async getDistributionData() {
-  // 1) Load approved + submitted profiles for member analytics
-  const { data: profiles, error: profileError } = await supabase
-    .from('profiles')
-    .select(
-      'id, resident_country, age, gender, kovil, native_place, education_history, is_submitted, is_approved'
-    )
-    .eq('is_submitted', true)
-    .eq('is_approved', true);
+  try {
+    const [profiles, roleRows] = await Promise.all([
+      fetchAllApprovedSubmittedProfilesForDistribution(),
+      fetchAllUserRoles(),
+    ]);
 
-  if (profileError) {
-    console.error('getDistributionData profiles error:', profileError.message);
+    const roleByUserId: Record<string, string> = {};
+    const roleBuckets = new Set<string>(['USER']);
+
+    (roleRows || []).forEach((row: any) => {
+      const uid = String(row?.user_id || '').trim();
+      const role = String(row?.role || 'USER').toUpperCase().trim() || 'USER';
+
+      if (uid) {
+        roleByUserId[uid] = role;
+      }
+
+      roleBuckets.add(role);
+    });
+
+    const distributions: any = {
+      countries: {},
+      ageGroups: { '18-25': 0, '26-35': 0, '36-45': 0, '46+': 0 },
+      education: {},
+      gender: {},
+      maritalStatus: {
+        Unmarried: 0,
+        Married: 0,
+        Other: 0,
+      },
+      roles: {},
+      kovils: {},
+      nativePlaces: {},
+    };
+
+    roleBuckets.forEach((role) => {
+      distributions.roles[role] = 0;
+    });
+
+    (roleRows || []).forEach((row: any) => {
+      const role = String(row?.role || 'USER').toUpperCase().trim() || 'USER';
+      distributions.roles[role] = (distributions.roles[role] || 0) + 1;
+    });
+
+    const memberProfiles = (profiles || []).filter((profile: any) => {
+      const role = (roleByUserId[profile.id] || 'USER').toUpperCase().trim();
+      return role === 'USER';
+    });
+
+    memberProfiles.forEach((profile: any) => {
+      const country = String(profile.resident_country || 'Other').trim() || 'Other';
+      distributions.countries[country] = (distributions.countries[country] || 0) + 1;
+
+      const nativePlace = String(profile.native_place || 'Other').trim() || 'Other';
+      distributions.nativePlaces[nativePlace] =
+        (distributions.nativePlaces[nativePlace] || 0) + 1;
+
+      const age = parseInt(String(profile.age || '0'), 10);
+      if (age >= 18 && age <= 25) distributions.ageGroups['18-25'] += 1;
+      else if (age >= 26 && age <= 35) distributions.ageGroups['26-35'] += 1;
+      else if (age >= 36 && age <= 45) distributions.ageGroups['36-45'] += 1;
+      else if (age > 45) distributions.ageGroups['46+'] += 1;
+
+      const gender = String(profile.gender || 'UNKNOWN').toUpperCase().trim() || 'UNKNOWN';
+      distributions.gender[gender] = (distributions.gender[gender] || 0) + 1;
+
+      const maritalRaw = String(profile.marital_status || '').trim().toUpperCase();
+      if (maritalRaw === 'UNMARRIED') {
+        distributions.maritalStatus.Unmarried += 1;
+      } else if (maritalRaw === 'MARRIED') {
+        distributions.maritalStatus.Married += 1;
+      } else {
+        distributions.maritalStatus.Other += 1;
+      }
+
+      const kovil = String(profile.kovil || 'Other').trim() || 'Other';
+      distributions.kovils[kovil] = (distributions.kovils[kovil] || 0) + 1;
+
+      if (Array.isArray(profile.education_history)) {
+        profile.education_history.forEach((entry: any) => {
+          const degree = String(entry?.level ?? '').trim();
+          if (!degree) return;
+          distributions.education[degree] =
+            (distributions.education[degree] || 0) + 1;
+        });
+      }
+    });
+
+    return distributions;
+  } catch (error: any) {
+    console.error('getDistributionData error:', error?.message || error);
     return {
       countries: {},
       ageGroups: { '18-25': 0, '26-35': 0, '36-45': 0, '46+': 0 },
       education: {},
       gender: {},
+      maritalStatus: { Unmarried: 0, Married: 0, Other: 0 },
       roles: { USER: 0, ADMIN: 0, MODERATOR: 0 },
       kovils: {},
       nativePlaces: {},
     };
   }
-
-  // 2) Load ALL roles for system-role analytics
-  const { data: roleRows, error: roleError } = await supabase
-    .from('user_roles')
-    .select('user_id, role');
-
-  if (roleError) {
-    console.error('getDistributionData roles error:', roleError.message);
-  }
-
-  const roleByUserId: Record<string, string> = {};
-  const roleBuckets = new Set<string>(['USER']);
-
-  (roleRows || []).forEach((row: any) => {
-    const uid = String(row?.user_id || '').trim();
-    const role = String(row?.role || 'USER').toUpperCase().trim() || 'USER';
-
-    if (uid) {
-      roleByUserId[uid] = role;
-    }
-
-    roleBuckets.add(role);
-  });
-
-  const distributions: any = {
-    countries: {},
-    ageGroups: { '18-25': 0, '26-35': 0, '36-45': 0, '46+': 0 },
-    education: {},
-    gender: {},
-    roles: {},
-    kovils: {},
-    nativePlaces: {},
-  };
-
-  // 3) Build role chart from ALL user_roles rows
-  roleBuckets.forEach((role) => {
-    distributions.roles[role] = 0;
-  });
-
-  (roleRows || []).forEach((row: any) => {
-    const role = String(row?.role || 'USER').toUpperCase().trim() || 'USER';
-    distributions.roles[role] = (distributions.roles[role] || 0) + 1;
-  });
-
-  // 4) Only USER profiles should contribute to member analytics
-  const memberProfiles = (profiles || []).filter((profile: any) => {
-    const role = (roleByUserId[profile.id] || 'USER').toUpperCase().trim();
-    return role === 'USER';
-  });
-
-  // 5) Build member-only distributions
-  memberProfiles.forEach((profile: any) => {
-    // Country
-    const country = String(profile.resident_country || 'Other').trim() || 'Other';
-    distributions.countries[country] = (distributions.countries[country] || 0) + 1;
-
-    // Native place
-    const nativePlace = String(profile.native_place || 'Other').trim() || 'Other';
-    distributions.nativePlaces[nativePlace] =
-      (distributions.nativePlaces[nativePlace] || 0) + 1;
-
-    // Age group
-    const age = parseInt(String(profile.age || '0'), 10);
-    if (age >= 18 && age <= 25) distributions.ageGroups['18-25'] += 1;
-    else if (age >= 26 && age <= 35) distributions.ageGroups['26-35'] += 1;
-    else if (age >= 36 && age <= 45) distributions.ageGroups['36-45'] += 1;
-    else if (age > 45) distributions.ageGroups['46+'] += 1;
-
-    // Gender
-    const gender = String(profile.gender || 'UNKNOWN').toUpperCase().trim() || 'UNKNOWN';
-    distributions.gender[gender] = (distributions.gender[gender] || 0) + 1;
-
-    // Kovil
-    const kovil = String(profile.kovil || 'Other').trim() || 'Other';
-    distributions.kovils[kovil] = (distributions.kovils[kovil] || 0) + 1;
-
-    // Education
-    if (Array.isArray(profile.education_history)) {
-      profile.education_history.forEach((entry: any) => {
-        const degree = String(entry?.level ?? '').trim();
-        if (!degree) return;
-        distributions.education[degree] =
-          (distributions.education[degree] || 0) + 1;
-      });
-    }
-  });
-
-  return distributions;
 },
 
-// --- 1. SEARCH PERFORMANCE ENGINE (PROFILES ONLY) ---
-/**
- * Generates high-density test data matching the specific profiles schema.
- * Bypasses Auth to avoid 429 rate limits, focusing purely on Search/DB performance.
- */
-async generateTestUsers(count: number, onProgress: (pct: number) => void) {
-  const CHUNK_SIZE = 100; // Optimal balance for browser memory and Supabase limits
-  const totalChunks = Math.ceil(count / CHUNK_SIZE);
-  console.log(`⚡ starting Turbo Generation: ${count} users in ${totalChunks} chunks.`);
+  // --- 4. SEARCH PERFORMANCE ENGINE (PROFILES ONLY) ---
+  async generateTestUsers(count: number, onProgress: (pct: number) => void) {
+    const CHUNK_SIZE = 100;
+    const totalChunks = Math.ceil(count / CHUNK_SIZE);
+    console.log(`⚡ starting Turbo Generation: ${count} users in ${totalChunks} chunks.`);
 
-  // ✅ Helpers: coerce AppData items ({label,value}) into strings
-  const asString = (v: any) => (v == null ? '' : String(v));
-  const pickValue = (arr: any[]) => {
-    const v = pick(arr);
-    if (v && typeof v === 'object') return asString(v.value ?? v.label ?? '');
-    return asString(v);
-  };
-  const pickManyValues = (arr: any[] | undefined, countN: number) => {
-    const xs = pickMany(arr, countN);
-    return (xs || [])
-      .map((v: any) => {
-        if (v && typeof v === 'object') return asString(v.value ?? v.label ?? '');
-        return asString(v);
-      })
-      .filter((s: string) => s.trim().length > 0);
-  };
+    const asString = (v: any) => (v == null ? '' : String(v));
+    const pickValue = (arr: any[]) => {
+      const v = pick(arr);
+      if (v && typeof v === 'object') return asString(v.value ?? v.label ?? '');
+      return asString(v);
+    };
+    const pickManyValues = (arr: any[] | undefined, countN: number) => {
+      const xs = pickMany(arr, countN);
+      return (xs || [])
+        .map((v: any) => {
+          if (v && typeof v === 'object') return asString(v.value ?? v.label ?? '');
+          return asString(v);
+        })
+        .filter((s: string) => s.trim().length > 0);
+    };
 
-  // Some sources in appData are arrays of strings (INTEREST_DATA), some are objects.
-  const interestsSource = (AppData.INTEREST_DATA || (AppData as any).INTERESTS_DATA) as any[];
+    const interestsSource = (AppData.INTEREST_DATA || (AppData as any).INTERESTS_DATA) as any[];
 
-  for (let c = 0; c < totalChunks; c++) {
-    try {
-      const batch: any[] = [];
-      const currentBatchSize = Math.min(CHUNK_SIZE, count - c * CHUNK_SIZE);
+    for (let c = 0; c < totalChunks; c++) {
+      try {
+        const batch: any[] = [];
+        const currentBatchSize = Math.min(CHUNK_SIZE, count - c * CHUNK_SIZE);
 
-      for (let i = 0; i < currentBatchSize; i++) {
-        const kData = pickKovil();
+        for (let i = 0; i < currentBatchSize; i++) {
+          const kData = pickKovil();
 
-        // ✅ Always strings, matching schema checks
-        const gender = pickValue(AppData.GENDER_DATA); // "MALE"/"FEMALE"
-        const firstName = pick(['Arun', 'Senthil', 'Meenakshi', 'Priya', 'Karthik', 'Deepak', 'Anitha', 'Vijay']);
-        const lastName = pick(['Palaniappan', 'Chidambaram', 'Muthu', 'Annamalai', 'Vellaiyan']);
+          const gender = pickValue(AppData.GENDER_DATA);
+          const firstName = pick(['Arun', 'Senthil', 'Meenakshi', 'Priya', 'Karthik', 'Deepak', 'Anitha', 'Vijay']);
+          const lastName = pick(['Palaniappan', 'Chidambaram', 'Muthu', 'Annamalai', 'Vellaiyan']);
 
-        // ✅ Degree/Field/University mirroring onboarding structure
-        const makeEdu = () => ({
-          level: pickValue(AppData.EDUCATION_DATA), // degree string only
-          field: pickValue(AppData.FIELD_OF_STUDY_DATA), // field string
-          university: pickValue(AppData.UNIVERSITY_DATA), // free text in real app; here we use a realistic string
-        });
+          const makeEdu = () => ({
+            level: pickValue(AppData.EDUCATION_DATA),
+            field: pickValue(AppData.FIELD_OF_STUDY_DATA),
+            university: pickValue(AppData.UNIVERSITY_DATA),
+          });
 
-        // ✅ Legacy text[] column should be degree strings only (for backward compatibility / indexes)
-        const degreeOnly = pickValue(AppData.EDUCATION_DATA);
+          const heightText = pickValue(AppData.HEIGHT_DATA);
+          const residentCountry = pickValue(AppData.RESIDENT_COUNTRY_DATA);
+          const citizenship = pickValue(AppData.RESIDENT_COUNTRY_DATA);
+          const dob = getRandomDate(new Date(1985, 0, 1), new Date(2000, 11, 31));
 
-        // ✅ Height is text in your schema; use the stored "value" (e.g., 5'8")
-        const heightText = pickValue(AppData.HEIGHT_DATA);
+          batch.push({
+            id: generateValidUUID(),
+            is_test_data: true,
+            is_approved: true,
+            is_submitted: true,
+            role: 'USER',
 
-        // ✅ resident_country/citizenship are TEXT columns; use the string value not {label,value}
-        const residentCountry = pickValue(AppData.RESIDENT_COUNTRY_DATA);
-        const citizenship = pickValue(AppData.RESIDENT_COUNTRY_DATA);
+            full_name: `${firstName} ${lastName} Test_${c}_${i}`,
+            dob,
+            gender,
+            email: `member_${Date.now()}_${c}_${i}@nexus.com`,
+            phone: `+91 900000000${i % 10}`,
 
-        // ✅ Dates: dob trigger calculates age; height trigger calculates height_inches
-        const dob = getRandomDate(new Date(1985, 0, 1), new Date(2000, 11, 31));
+            citizenship,
+            resident_country: residentCountry,
+            resident_status: pickValue(AppData.RESIDENT_STATUS_DATA),
+            current_state: pick(['Tamil Nadu', 'California', 'Ontario', 'London']),
+            current_city: pick(['Chennai', 'San Francisco', 'Toronto', 'Coimbatore']),
+            native_place: (() => {
+              const v = pick(AppData.NATIVE_PLACES_DATA);
+              return v && typeof v === 'object' ? asString(v.value ?? v.label ?? '') : asString(v);
+            })(),
 
-        batch.push({
-          id: generateValidUUID(),
-          is_test_data: true,
-          is_approved: true,
-          is_submitted: true,
-          role: 'USER',
+            kovil: asString(kData.kovil),
+            pirivu: asString(kData.pirivu),
+            rasi: (() => {
+              const v = pick(AppData.RASI_DATA);
+              return v && typeof v === 'object' ? asString(v.value ?? v.label ?? '') : asString(v);
+            })(),
+            star: (() => {
+              const v = pick(AppData.NAKSHATRA_DATA);
+              return v && typeof v === 'object' ? asString(v.value ?? v.label ?? '') : asString(v);
+            })(),
 
-          // 👤 Basic Identity
-          full_name: `${firstName} ${lastName} Test_${c}_${i}`,
-          dob,
-          gender,
-          email: `member_${Date.now()}_${c}_${i}@nexus.com`,
-          phone: `+91 900000000${i % 10}`,
+            marital_status: pickValue(AppData.MARITAL_STATUS_DATA),
+            height: heightText,
+            profession: pickValue(AppData.PROFESSION_DATA),
+            workplace: pick(['TCS', 'Google', 'Apollo Hospital', 'Self-Employed']),
+            linkedin_profile: 'https://linkedin.com/in/testuser',
 
-          // 📍 Location & Origins
-          citizenship,
-          resident_country: residentCountry,
-          resident_status: pickValue(AppData.RESIDENT_STATUS_DATA),
-          current_state: pick(['Tamil Nadu', 'California', 'Ontario', 'London']),
-          current_city: pick(['Chennai', 'San Francisco', 'Toronto', 'Coimbatore']),
-          native_place: (() => {
-            // NATIVE_PLACES_DATA in your appData is already mapped to {label,value}
-            const v = pick(AppData.NATIVE_PLACES_DATA);
-            return v && typeof v === 'object' ? asString(v.value ?? v.label ?? '') : asString(v);
-          })(),
+            interests: pickManyValues(interestsSource, 5),
+            siblings: [pick(['Brother', 'Sister'])],
 
-          // 🕍 Community & Astrology
-          kovil: asString(kData.kovil),
-          pirivu: asString(kData.pirivu),
-          rasi: (() => {
-            const v = pick(AppData.RASI_DATA); // likely {label,value}
-            return v && typeof v === 'object' ? asString(v.value ?? v.label ?? '') : asString(v);
-          })(),
-          star: (() => {
-            const v = pick(AppData.NAKSHATRA_DATA); // likely {label,value}
-            return v && typeof v === 'object' ? asString(v.value ?? v.label ?? '') : asString(v);
-          })(),
+            family_initials: pickValue(AppData.FAMILY_INITIALS_DATA),
+            father_name: `Father of ${firstName}`,
+            father_work: 'Business',
+            father_phone: '+11234567890',
+            mother_name: `Mother of ${firstName}`,
+            mother_work: 'Home Maker',
+            mother_phone: '+11234567890',
 
-          // 🎓 Professional & Education
-          marital_status: pickValue(AppData.MARITAL_STATUS_DATA),
-          height: heightText,
-          profession: pickValue(AppData.PROFESSION_DATA),
-          workplace: pick(['TCS', 'Google', 'Apollo Hospital', 'Self-Employed']),
-          linkedin_profile: 'https://linkedin.com/in/testuser',
+            family_details: {
+              siblings: [
+                {
+                  name: `${firstName}'s sibling`,
+                  maritalStatus: 'Married',
+                  occupation: pickValue(AppData.OCCUPATION_DATA),
+                },
+              ],
+            },
 
-          // 📚 Array Types
-          interests: pickManyValues(interestsSource, 5),
-          siblings: [pick(['Brother', 'Sister'])],
+            education_history: [makeEdu(), makeEdu()],
 
-          // 👨‍👩‍👧 Family Metadata
-          family_initials: pickValue(AppData.FAMILY_INITIALS_DATA),
-          father_name: `Father of ${firstName}`,
-          father_work: 'Business',
-          father_phone: '+11234567890',
-          mother_name: `Mother of ${firstName}`,
-          mother_work: 'Home Maker',
-          mother_phone: '+11234567890',
+            expectations:
+              'Looking for a compatible partner from a traditional background with shared values.'
+                .replace(/\s+/g, ' ')
+                .trim(),
 
-          /**
-           * 🏗️ JSONB: must match ProfileDisplay expectations
-           * Store strings for occupation (not {label,value})
-           */
-          family_details: {
-            siblings: [
-              {
-                name: `${firstName}'s sibling`,
-                maritalStatus: 'Married',
-                occupation: pickValue(AppData.OCCUPATION_DATA),
-              },
-            ],
-          },
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
 
-          /**
-           * ✅ Mirrors onboarding exactly:
-           * education_history: [{ level: string, field: string, university: string }]
-           */
-          education_history: [makeEdu(), makeEdu()],
+        const { error } = await supabase.from('profiles').insert(batch);
 
-          // 🚀 EXPECTATION FIX: Single line string to allow component auto-wrapping
-          expectations:
-            'Looking for a compatible partner from a traditional background with shared values.'
-              .replace(/\s+/g, ' ')
-              .trim(),
+        if (error) {
+          console.error(`❌ Batch ${c} failed:`, error.message);
+          throw error;
+        }
 
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+        onProgress(Math.round(((c + 1) / totalChunks) * 100));
+        await new Promise((res) => setTimeout(res, 200));
+      } catch (err: any) {
+        console.error(`🚨 Fatal crash at chunk ${c}:`, err.message);
+        break;
       }
-
-      // 🚀 BULK INSERT: Sends CHUNK_SIZE users in ONE network request
-      const { error } = await supabase.from('profiles').insert(batch);
-
-      if (error) {
-        console.error(`❌ Batch ${c} failed:`, error.message);
-        throw error;
-      }
-
-      onProgress(Math.round(((c + 1) / totalChunks) * 100));
-      // Give the browser a moment to breathe
-      await new Promise((res) => setTimeout(res, 200));
-    } catch (err: any) {
-      console.error(`🚨 Fatal crash at chunk ${c}:`, err.message);
-      break;
     }
-  }
 
-  console.log('🏁 Generation cycle complete.');
-  return true;
-},
+    console.log('🏁 Generation cycle complete.');
+    return true;
+  },
 
-  /**
-   * 🚀 RPC PURGE (Handles 100K+ Users Instantly)
-   * Calls a server-side Postgres function to bypass browser network limits.
-   */
   async deleteTestUsers(onProgress: (pct: number) => void) {
-    console.log("⚡ Triggering Server-Side Purge...");
-    onProgress(10); // Start progress
+    console.log('⚡ Triggering Server-Side Purge...');
+    onProgress(10);
 
     try {
-      // 🚀 Single RPC call replaces thousands of individual delete requests
       console.time('purge_test_data');
       const { data: count, error } = await supabase.rpc('purge_test_data', { batch_size: 500 });
       console.timeEnd('purge_test_data');
@@ -709,13 +833,12 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
       onProgress(100);
       return true;
     } catch (error: any) {
-      console.error("❌ RPC Purge failed:", error.message);
-      // Fallback: If RPC fails, you can still use the batched JS version
+      console.error('❌ RPC Purge failed:', error.message);
       throw error;
     }
   },
 
-  // --- 5. ACCESS & APPROVALS (Manual Join for Cache Resilience) ---
+  // --- 5. ACCESS & APPROVALS ---
   async approveProfile(userId: string) {
     const { error } = await supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
     if (error) throw error;
@@ -728,77 +851,127 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
     await this.logAction('PROFILE_REVOKE', `Rejected user ID: ${userId}`, userId);
   },
 
-  async getPendingProfiles() {
+  async getPendingProfilesPage(
+    limit: number = 20,
+    cursor?: PendingProfileCursor | null
+  ): Promise<PendingProfilesPage> {
     try {
-      // Step 1: Fetch Pending Profiles
-      const { data: profs, error: profError } = await supabase
+      const safeLimit = Math.max(1, Math.min(limit, 100));
+
+      let query = supabase
         .from('profiles')
         .select('*')
         .eq('is_approved', false)
-        .eq('is_submitted', true);
+        .eq('is_submitted', true)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(safeLimit + 1);
+
+      if (cursor?.created_at && cursor?.id) {
+        query = query.or(
+          `created_at.gt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.gt.${cursor.id})`
+        );
+      }
+
+      const { data: profs, error: profError } = await query;
 
       if (profError) throw profError;
-      if (!profs) return [];
 
-      // Step 2: Manual Join Roles to filter out Admin profiles
-      const userIds = profs.map(p => p.id);
-      const { data: roles } = await supabase
-        .from('user_roles')
-        .select('user_id, role')
-        .in('user_id', userIds);
+      const rawItems = profs ?? [];
+      if (rawItems.length === 0) {
+        return {
+          items: [],
+          nextCursor: null,
+          hasMore: false,
+        };
+      }
 
-      return profs
-        .map(u => ({ ...u, role: roles?.find(r => r.user_id === u.id)?.role || 'USER' }))
-        .filter(u => u.role !== 'ADMIN');
+      const userIds = rawItems.map((p) => p.id);
+      const roleMap = await fetchUserRolesByIds(userIds);
+
+      const filtered = rawItems
+        .map((u) => ({
+          ...u,
+          role: roleMap.get(String(u.id)) || 'USER',
+        }))
+        .filter((u) => u.role !== 'ADMIN');
+
+      const items = filtered.slice(0, safeLimit);
+      const hasMore = rawItems.length > safeLimit;
+
+      const lastItem = items.length > 0 ? items[items.length - 1] : null;
+
+      return {
+        items,
+        nextCursor:
+          hasMore && lastItem?.created_at && lastItem?.id
+            ? {
+                created_at: String(lastItem.created_at),
+                id: String(lastItem.id),
+              }
+            : null,
+        hasMore,
+      };
     } catch (err) {
-      console.error("getPendingProfiles Error:", err);
-      return [];
+      console.error('getPendingProfilesPage Error:', err);
+      return {
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+      };
     }
+  },
+
+  async getPendingProfiles() {
+    const firstPage = await this.getPendingProfilesPage(5, null);
+    return firstPage.items;
   },
 
   async getAnalytics() {
     try {
-      const [
-        { data: submittedProfiles, error: submittedErr },
-        { data: pendingProfiles, error: pendingErr },
-        config,
-      ] = await Promise.all([
-        supabase
-          .from('profiles')
-          .select('id, full_name, email, last_login_at, created_at, is_submitted, is_approved')
-          .eq('is_submitted', true),
-
-        supabase
-          .from('profiles')
-          .select('id')
-          .eq('is_submitted', true)
-          .eq('is_approved', false),
-
+      const [config, reportsRes, profiles, roleRows] = await Promise.all([
         this.getSystemConfig(),
+        supabase.from('reports').select('id, status', { count: 'exact' }),
+        fetchAllAnalyticsProfiles(),
+        fetchAllUserRoles(),
       ]);
 
-      if (submittedErr) throw submittedErr;
-      if (pendingErr) throw pendingErr;
+      const staffCount = roleRows.filter((r: any) => {
+        const role = String(r.role || 'USER').toUpperCase().trim();
+        return role === 'ADMIN' || role === 'MODERATOR';
+      }).length;
 
-      const profiles = submittedProfiles ?? [];
-      const pending = pendingProfiles ?? [];
+      if (reportsRes.error) throw reportsRes.error;
 
-      const userIds = profiles.map((p) => p.id).filter(Boolean);
-
-      let roleRows: Array<{ user_id: string; role: string }> = [];
-      if (userIds.length > 0) {
-        const { data, error } = await supabase
-          .from('user_roles')
-          .select('user_id, role')
-          .in('user_id', userIds);
-
-        if (error) throw error;
-        roleRows = data ?? [];
-      }
+      const reports = reportsRes.data ?? [];
 
       const roleByUserId: Record<string, string> = {};
-      roleRows.forEach((r) => {
-        roleByUserId[r.user_id] = String(r.role || 'USER').toUpperCase().trim();
+      roleRows.forEach((r: any) => {
+        roleByUserId[String(r.user_id)] = String(r.role || 'USER').toUpperCase().trim();
+      });
+
+      const allMemberProfiles = profiles.filter((profile: any) => {
+        const role = roleByUserId[profile.id] || 'USER';
+        return role === 'USER';
+      });
+
+      const approvedMemberProfiles = allMemberProfiles.filter(
+        (p: any) => p.is_submitted === true && p.is_approved === true
+      );
+
+      const approvedActiveProfiles = approvedMemberProfiles.filter((p: any) => {
+        const status = String(p.account_status || 'ACTIVE').toUpperCase().trim();
+        return status !== 'INACTIVE';
+      });
+
+      const draftProfiles = allMemberProfiles.filter((p: any) => p.is_submitted !== true);
+      const pendingProfiles = allMemberProfiles.filter(
+        (p: any) => p.is_submitted === true && p.is_approved !== true
+      );
+
+      const accountInactiveProfiles = approvedMemberProfiles.filter((p: any) => {
+        const status = String(p.account_status || 'ACTIVE').toUpperCase().trim();
+        return status === 'INACTIVE';
       });
 
       const thresholdDays = Math.max(
@@ -806,58 +979,277 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
         parseInt(String(config?.inactiveUserThresholdDays ?? '30'), 10) || 30
       );
 
+      const now = new Date();
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - thresholdDays);
 
-      const inactiveUsers = profiles
-        .map((p) => {
-          const role = roleByUserId[p.id] || 'USER';
-          return {
-            id: p.id,
-            full_name: p.full_name,
-            email: p.email,
-            role,
-            last_login_at: p.last_login_at ?? null,
-            created_at: p.created_at ?? null,
-          };
-        })
-        .filter((u) => {
-          if (!u.last_login_at) return true; // never logged in = inactive
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      const inactiveCandidates = approvedActiveProfiles
+        .map((p: any) => ({
+          id: p.id,
+          full_name: p.full_name,
+          email: p.email,
+          role: roleByUserId[p.id] || 'USER',
+          last_login_at: p.last_login_at ?? null,
+          created_at: p.created_at ?? null,
+        }))
+        .filter((u: any) => {
+          if (!u.last_login_at) return true;
           return new Date(u.last_login_at) < cutoff;
         })
-        .sort((a, b) => {
+        .sort((a: any, b: any) => {
           const aTime = a.last_login_at ? new Date(a.last_login_at).getTime() : 0;
           const bTime = b.last_login_at ? new Date(b.last_login_at).getTime() : 0;
-          return aTime - bTime; // oldest login first
-        })
-        .slice(0, 15);
+          return aTime - bTime;
+        });
+
+      const activeLast7Days = approvedActiveProfiles.filter((p: any) => {
+        if (!p.last_login_at) return false;
+        return new Date(p.last_login_at) >= sevenDaysAgo;
+      }).length;
+
+      const activeLast30Days = approvedActiveProfiles.filter((p: any) => {
+        if (!p.last_login_at) return false;
+        return new Date(p.last_login_at) >= thirtyDaysAgo;
+      }).length;
+
+      const neverLoggedIn = approvedActiveProfiles.filter((p: any) => !p.last_login_at).length;
+
+      const newThisMonth = allMemberProfiles.filter((p: any) => {
+        if (!p.created_at) return false;
+        return new Date(p.created_at) >= monthStart;
+      }).length;
+
+      const profilesWithPhoto = approvedActiveProfiles.filter((p: any) => {
+        return !!String(p.profile_photo_url || '').trim();
+      }).length;
+
+      const profilesWithProfession = approvedActiveProfiles.filter((p: any) => {
+        return !!String(p.profession || '').trim();
+      }).length;
+
+      const profilesWithExpectations = approvedActiveProfiles.filter((p: any) => {
+        return !!String(p.expectations || '').trim();
+      }).length;
+
+      const profilesWithEducation = approvedActiveProfiles.filter((p: any) => {
+        return Array.isArray(p.education_history) && p.education_history.length > 0;
+      }).length;
+
+      const openReports = reports.filter((r: any) => {
+        const status = String(r.status || 'PENDING').toUpperCase().trim();
+        return status !== 'RESOLVED' && status !== 'CLOSED';
+      }).length;
+
+      const approvedPoolSize = approvedActiveProfiles.length || 0;
+
+      const percentage = (value: number, total: number) => {
+        if (!total) return 0;
+        return Math.round((value / total) * 100);
+      };
 
       return {
-        totalUsers: profiles.length,
-        pendingApprovals: pending.length,
-        activeConversations: 0,
-        inactiveUsers,
+        totalUsers: allMemberProfiles.length,
+        staffCount,
+        pendingApprovals: pendingProfiles.length,
+
+        draftProfiles: draftProfiles.length,
+        approvedActiveProfiles: approvedActiveProfiles.length,
+        accountInactiveProfiles: accountInactiveProfiles.length,
+
+        inactiveMembers: inactiveCandidates.length,
+        inactiveUsers: inactiveCandidates.slice(0, 15),
         inactiveThresholdDays: thresholdDays,
+
+        activeLast7Days,
+        activeLast30Days,
+        neverLoggedIn,
+        newThisMonth,
+
+        profilesWithPhoto,
+        profilesWithProfession,
+        profilesWithExpectations,
+        profilesWithEducation,
+
+        profilePhotoCompletionRate: percentage(profilesWithPhoto, approvedPoolSize),
+        professionCompletionRate: percentage(profilesWithProfession, approvedPoolSize),
+        expectationsCompletionRate: percentage(profilesWithExpectations, approvedPoolSize),
+        educationCompletionRate: percentage(profilesWithEducation, approvedPoolSize),
+
+        openReports,
+
+        activeConversations: 0,
       };
     } catch (err: any) {
       console.warn('getAnalytics error:', err?.message || err);
       return {
         totalUsers: 0,
+        staffCount: 0,
         pendingApprovals: 0,
-        activeConversations: 0,
+
+        draftProfiles: 0,
+        approvedActiveProfiles: 0,
+        accountInactiveProfiles: 0,
+
+        inactiveMembers: 0,
         inactiveUsers: [],
         inactiveThresholdDays: 30,
+
+        activeLast7Days: 0,
+        activeLast30Days: 0,
+        neverLoggedIn: 0,
+        newThisMonth: 0,
+
+        profilesWithPhoto: 0,
+        profilesWithProfession: 0,
+        profilesWithExpectations: 0,
+        profilesWithEducation: 0,
+
+        profilePhotoCompletionRate: 0,
+        professionCompletionRate: 0,
+        expectationsCompletionRate: 0,
+        educationCompletionRate: 0,
+
+        openReports: 0,
+
+        activeConversations: 0,
       };
     }
   },
 
-  async revokeAccess(email: string) {
-    const { data: user } = await supabase.from('profiles').select('id').eq('email', email).single();
-    if (user) {
-      await supabase.from('profiles').update({ is_approved: false }).eq('id', user.id);
-      await supabase.from('user_roles').update({ role: 'USER' }).eq('user_id', user.id);
-      await this.logAction('PROFILE_REVOKE', `Revoked access for ${email}`, email);
+  async revokeAccess(email: string, note?: string) {
+    const safeEmail = String(email || '').trim().toLowerCase();
+    if (!safeEmail) throw new Error('Email is required');
 
+    const { data: user, error: userError } = await supabase
+      .from('profiles')
+      .select('id, email, full_name')
+      .ilike('email', safeEmail)
+      .maybeSingle();
+
+    if (userError) throw userError;
+    if (!user?.id) throw new Error('User not found');
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({
+        is_approved: false,
+        account_status: 'INACTIVE',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id);
+
+    if (profileError) throw profileError;
+
+    const { error: roleError } = await supabase
+      .from('user_roles')
+      .update({ role: 'USER' })
+      .eq('user_id', user.id);
+
+    if (roleError) throw roleError;
+
+    const reportNote = String(note || '').trim();
+    const resolvedDetails = reportNote
+      ? `Resolved after deactivation. ${reportNote}`
+      : 'Resolved after deactivation.';
+
+    const { error: reportsError } = await supabase
+      .from('reports')
+      .update({
+        status: 'RESOLVED',
+        details: resolvedDetails,
+      })
+      .eq('target_id', user.id)
+      .or('status.is.null,status.eq.PENDING,status.eq.OPEN,status.eq.ACTIVE');
+
+    if (reportsError) {
+      console.warn('resolve reports during revokeAccess failed:', reportsError);
+    }
+
+    const detailParts = [`Deactivated ${user.full_name || safeEmail}`];
+    if (reportNote) detailParts.push(`Note: ${reportNote}`);
+    await this.logAction('PROFILE_REVOKE', detailParts.join(' • '), user.id);
+
+    return { success: true, userId: user.id };
+  },
+
+  async reactivateUser(email: string, note?: string) {
+    const safeEmail = String(email || '').trim().toLowerCase();
+    if (!safeEmail) throw new Error('Email is required');
+
+    const { data: user, error: userError } = await supabase
+      .from('profiles')
+      .select('id, email, full_name')
+      .ilike('email', safeEmail)
+      .maybeSingle();
+
+    if (userError) throw userError;
+    if (!user?.id) throw new Error('User not found');
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({
+        account_status: 'ACTIVE',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id);
+
+    if (profileError) throw profileError;
+
+    const actionNote = String(note || '').trim();
+    const detailParts = [`Reactivated ${user.full_name || safeEmail}`];
+    if (actionNote) detailParts.push(`Note: ${actionNote}`);
+    await this.logAction('PROFILE_APPROVAL', detailParts.join(' • '), user.id);
+
+    return { success: true, userId: user.id };
+  },
+
+  async getDeactivatedUsers() {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, account_status, updated_at')
+        .eq('account_status', 'INACTIVE')
+        .order('updated_at', { ascending: false });
+
+      if (error) throw error;
+
+      const users = data ?? [];
+      if (!users.length) return [];
+
+      const targetIds = users.map((u: any) => String(u.id));
+      const { data: logs, error: logsError } = await supabase
+        .from('audit_logs')
+        .select('target_id, details, timestamp, action')
+        .in('target_id', targetIds)
+        .in('action', ['PROFILE_REVOKE', 'PROFILE_APPROVAL'])
+        .order('timestamp', { ascending: false });
+
+      if (logsError) {
+        console.warn('getDeactivatedUsers logs lookup failed:', logsError);
+      }
+
+      const noteByTarget = new Map<string, string>();
+      (logs ?? []).forEach((log: any) => {
+        const key = String(log.target_id || '');
+        if (!key || noteByTarget.has(key)) return;
+        noteByTarget.set(key, String(log.details || ''));
+      });
+
+      return users.map((user: any) => ({
+        ...user,
+        lastActionNote: noteByTarget.get(String(user.id)) || '',
+      }));
+    } catch (err) {
+      console.error('getDeactivatedUsers Error:', err);
+      return [];
     }
   },
 
@@ -871,7 +1263,7 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
     return { logs: data || [], totalCount: count || 0 };
   },
 
-  async setupModerator(details: { fullName: string, email: string, role: string }) {
+  async setupModerator(details: { fullName: string; email: string; role: string }) {
     try {
       const redirectBase =
         Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
@@ -887,13 +1279,13 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
       });
 
       if (inviteError) throw inviteError;
-      const msg = "Invite Sent! The staff member will be fully active once they click the link and set their password.";
-      Platform.OS === 'web' ? alert(msg) : Alert.alert("Success", msg);
+      const msg = 'Invite Sent! The staff member will be fully active once they click the link and set their password.';
+      Platform.OS === 'web' ? alert(msg) : Alert.alert('Success', msg);
       return { success: true };
     } catch (error: any) {
-      console.error("Staff Invite Failed:", error.message);
-      const errorMsg = error.message || "Could not send invitation.";
-      Platform.OS === 'web' ? alert(errorMsg) : Alert.alert("Error", errorMsg);
+      console.error('Staff Invite Failed:', error.message);
+      const errorMsg = error.message || 'Could not send invitation.';
+      Platform.OS === 'web' ? alert(errorMsg) : Alert.alert('Error', errorMsg);
       return { success: false, error: error.message };
     }
   },
@@ -930,23 +1322,40 @@ async generateTestUsers(count: number, onProgress: (pct: number) => void) {
 
   async exportToCSV() {
     try {
-      const { data: profs } = await supabase.from('profiles').select('*');
+      const profs = await fetchAllProfilesBasic();
       if (!profs || profs.length === 0) return '';
 
-      const userIds = profs.map(p => p.id);
-      const { data: roles } = await supabase.from('user_roles').select('user_id, role').in('user_id', userIds);
+      const userIds = profs.map((p) => p.id);
+      const roleMap = new Map<string, string>();
 
-      const flattened = profs.map(u => ({ 
-        ...u, 
-        role: roles?.find(r => r.user_id === u.id)?.role || 'USER' 
+      for (let i = 0; i < userIds.length; i += 1000) {
+        const chunk = userIds.slice(i, i + 1000);
+        const { data: roles, error: roleError } = await supabase
+          .from('user_roles')
+          .select('user_id, role')
+          .in('user_id', chunk);
+
+        if (roleError) throw roleError;
+
+        (roles ?? []).forEach((r: any) => {
+          roleMap.set(String(r.user_id), String(r.role || 'USER'));
+        });
+      }
+
+      const flattened = profs.map((u) => ({
+        ...u,
+        role: roleMap.get(String(u.id)) || 'USER',
       }));
 
       const headers = Object.keys(flattened[0]).join(',');
-      const rows = flattened.map(u => Object.values(u).map(v => `"${v}"`).join(',')).join('\n');
+      const rows = flattened
+        .map((u) => Object.values(u).map((v) => `"${String(v ?? '')}"`).join(','))
+        .join('\n');
+
       return `${headers}\n${rows}`;
     } catch (err) {
-      console.error("Export failed:", err);
+      console.error('Export failed:', err);
       return '';
     }
-  }
+  },
 };
